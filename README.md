@@ -5,9 +5,7 @@ Whoacharts is a python library that allows you to create flowcharts in python co
 
 ## Installation
 
-```bash
-pip install whoacharts
-```
+Clone the repo and `pip install .`
 
 ## Examples
 
