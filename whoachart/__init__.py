@@ -25,7 +25,8 @@ class Symbol:
         self.name = name
         self.label = self.format_label(label)
         self.graph = graph
-        self._times_considered = 0
+        
+        self.times_considered = 0
         self.__post_init__(**kwargs)
         
     def format_label(self, label_text:Optional[str]):
@@ -60,7 +61,7 @@ class Symbol:
         
     def _consider(self, context:Dict):
         logger.debug(f"Considering {self.name}")
-        self._times_considered += 1
+        self.times_considered += 1
         return self.consider(context=context)
 
     def consider(self, context:Dict):
@@ -111,6 +112,8 @@ class FlowChart:
         self.graph = graphtype()
         self.context = {} if context is None else context
         
+        self.max_recursion_steps = 100
+        
         self.symbols = {}
     
     def add_symbol(self, symbol:Symbol):
@@ -151,6 +154,9 @@ class FlowChart:
     def crawl(self, start:Symbol):
         current_node = self.get_symbol(start)
         next_nodes = self.consider_node(current_node)
+        if current_node.times_considered > self.max_recursion_steps:
+            raise RecursionError(f"Max recursion steps reached for {current_node.name}")
+        
         current_node.set_node_attributes(color=self.colors.VISITED)
         
         for node in next_nodes:
