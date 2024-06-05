@@ -1,3 +1,4 @@
+import html
 from typing import TypeVar, Union, Dict, Any, Optional
 import networkx as nx
 import pygraphviz as pgv
@@ -23,6 +24,7 @@ class Symbol:
     label_format: str='<{name}<br/><font point-size="10">{label}</font>>'
     def __init__(self, name, label:str=None, graph:nx.Graph=None, **kwargs):
         self.name = name
+        self._label = label
         self.label = self.format_label(label)
         self.graph = graph
         
@@ -48,8 +50,6 @@ class Symbol:
     def join_symbols(self, other:SymbolType)->SymbolType:
         assert other.graph is None or other.graph is self.graph, "Symbols must be in the same graph"
         other.graph = self.graph
-        #self.graph.add_node(self.name, shape=self.shape)
-        #self.graph.add_node(other.name, shape=other.shape)
         self.graph.add_edge(self.name, other.name)
         return self
 
@@ -76,6 +76,10 @@ class Decision(Symbol):
     def __post_init__(self, condition_func:callable):
         self.options = {}
         self.condition_func = condition_func
+        doc_string = condition_func.__doc__
+        if self._label is None and doc_string is not None:            
+            escaped_text = html.escape(doc_string.strip())
+            self.label = self.format_label(escaped_text)
         
     def add_option(self, node:Symbol, condition:Any):
         self.options[condition] = node

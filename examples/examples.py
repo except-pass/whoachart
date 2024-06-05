@@ -25,12 +25,16 @@ def simple_example():
     
 def bigger_example():
     def is_egg_raw(context:Dict):
+        '''
+        Check if the egg 
+        is still raw
+        '''
         return context['egg_state'] == 'raw'
 
     context = {'egg_state': 'raw', 'desired_state': 'boiled', 'water_temperature': 100}
     fc = FlowChart(context)
     start = fc.start_symbol("Start")
-    egg_is_raw = fc.decision(name='Cooking egg?', label="Is the egg raw?", condition_func=is_egg_raw)
+    egg_is_raw = fc.decision(name='Cooking egg?', condition_func=is_egg_raw) #docstring is used for the label
     boil_egg = fc.symbol("Boil egg")
     do_nothing = fc.symbol("Do nothing")
     start>egg_is_raw
@@ -67,4 +71,4 @@ def bigger_example():
 
 if __name__ == '__main__':
     simple_example()
-    #bigger_example()
+    bigger_example()
