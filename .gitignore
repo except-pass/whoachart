@@ -1,0 +1,17 @@
+.env
+.venv
+.cache
+build/
+__pycache__
+*.egg-info
+.vscode
+
+*.pkl
+*.log
+# Ignore dynaconf secret files
+.secrets.*
+settings.yaml
+
+*.png
+*.dot
+*.svg
