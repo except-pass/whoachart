@@ -7,3 +7,4 @@ icecream
 #sudo apt-get install graphviz graphviz-dev python3-dev
 pygraphviz
 networkx[default]
+pydot

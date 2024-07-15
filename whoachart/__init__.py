@@ -6,6 +6,7 @@ from networkx.drawing.nx_agraph import write_dot
 
 from loguru import logger
 
+"""
 def render(graph:nx.Graph, filename:str):
     '''
     filename (str): The filename without extension.  Can be any legal extension like png or svg.
@@ -17,7 +18,22 @@ def render(graph:nx.Graph, filename:str):
     A = pgv.AGraph(f'{filename}.dot')
     A.layout(prog='dot')
     A.draw(filename)
+"""
+def render(graph: nx.Graph, filename: str=None, format='png'):
+    '''
+    Render the graph to a file with the specified filename and extension.
 
+    Args:
+        graph (nx.Graph): The NetworkX graph to render.
+        filename (str): The filename with extension. Can be any legal extension like png or svg.
+    '''
+    # Convert the graph to a DOT format string
+    dot_str = nx.nx_pydot.to_pydot(graph).to_string()
+
+    # Use pygraphviz to render the DOT string
+    A = pgv.AGraph(string=dot_str)
+    A.layout(prog='dot')
+    return A.draw(filename, format=format)
 
 VISITED = 'visited'
 
@@ -46,7 +62,7 @@ class Symbol:
             if arg is not None:
                 text_entries.append(html.escape(arg))
         for key, value in kwargs.items():
-            text_entries.append(f"{key}: {html.escape(value)}")
+            text_entries.append(f"{key} {html.escape(value)}")
 
         if text_entries:
             label_text = '<br/>'.join(text_entries)
@@ -54,6 +70,7 @@ class Symbol:
             text = text.replace('\n', '<br/>')
         else:
             text = self.name
+            
         return text
         
     def __repr__(self):
@@ -201,8 +218,8 @@ class FlowChart:
         self.add_symbol(s)
         return s
     
-    def render(self, filename:str):
-        return render(self.graph, filename)
+    def render(self, filename:str=None, format:str="png"):
+        return render(self.graph, filename, format=format)
     
     def get_symbol(self, symbol:Union[str, Symbol]):
         if isinstance(symbol, Symbol):
