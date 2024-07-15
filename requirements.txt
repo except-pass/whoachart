@@ -4,7 +4,7 @@ loguru
 pydantic
 python-dotenv
 icecream
-#sudo apt-get install graphviz graphviz-dev python3-dev
+#sudo apt-get install graphviz graphviz-dev python3-dev gcc g++
 pygraphviz
 networkx[default]
-pydot
+pydot==2.0.0
