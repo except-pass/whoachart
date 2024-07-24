@@ -68,6 +68,7 @@ class Symbol:
             label_text = '<br/>'.join(text_entries)
             text = self.label_format.format(name=self.name, label=label_text)
             text = text.replace('\n', '<br/>')
+            text = text.replace
         else:
             text = self.name
             
@@ -117,14 +118,22 @@ class Symbol:
     def get_next_nodes(self, context:Dict):
         return list(self.graph.successors(self.name))
 
+class UnrecognizedOption(Exception):
+    pass
+
 class Decision(Symbol):
     shape = 'diamond'
-    def __post_init__(self, condition_func:callable=None):
+    def __post_init__(self, condition_func:callable=None, strict=True):
+        '''
+        strict will raise error if the condition function returns a value that is not in the options.
+        '''
         self.options = {}
         self.condition_func = condition_func or self.condition
         doc_string = condition_func.__doc__
         self._label = self._label or doc_string
         self.label = self.format_text_as_label(self._label)
+        
+        self.strict = strict
 
     def condition(self, context:Dict):
         raise NotImplementedError("You must implement a condition function or pass one in the constructor.")
@@ -137,6 +146,8 @@ class Decision(Symbol):
     def check_condition(self, context:Dict):
         result = self.condition_func(context)
         next_node = self.options.get(result)
+        if next_node is None and self.strict:
+            raise UnrecognizedOption(f"Condition function returned {result} which is not in the options: {self.options.keys()}")
         new_label=None
         return next_node, new_label
     
@@ -175,6 +186,7 @@ class WarningState(EndSymbol):
     colors=warning_colors
 
 class FlowChart:
+    description:Optional[str]=None
     def __init__(self, context:Dict=None, graphtype=nx.DiGraph):
         self.graph = graphtype()
         self.context = {} if context is None else context #don't need the context until we start crawling
