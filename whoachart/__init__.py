@@ -68,7 +68,7 @@ class Symbol:
             label_text = '<br/>'.join(text_entries)
             text = self.label_format.format(name=self.name, label=label_text)
             text = text.replace('\n', '<br/>')
-            text = text.replace
+            text = text.replace(':', ' ')
         else:
             text = self.name
             
