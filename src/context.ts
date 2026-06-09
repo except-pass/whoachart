@@ -1,5 +1,5 @@
 // src/context.ts
-import { writeFile } from "node:fs/promises"
+import { writeFile, unlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Marble, ChartNode } from "./types"
@@ -43,15 +43,19 @@ export async function runShell(script: string, marble: Marble, node: ChartNode):
   const ctxPath = join(tmpdir(), `whoachart-ctx-${marble.id}-${node.id}.json`)
   await writeFile(ctxPath, JSON.stringify(marble.context))
 
-  const proc = Bun.spawn(["bash", "-c", script], {
-    env: buildEnv(marble, node, ctxPath),
-    stdout: "pipe",
-    stderr: "pipe",
-  })
-  const stdout = await new Response(proc.stdout).text()
-  const stderr = await new Response(proc.stderr).text()
-  const exitCode = await proc.exited
+  try {
+    const proc = Bun.spawn(["bash", "-c", script], {
+      env: buildEnv(marble, node, ctxPath),
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const stdout = await new Response(proc.stdout).text()
+    const stderr = await new Response(proc.stderr).text()
+    const exitCode = await proc.exited
 
-  const { next, merge } = parseEmit(stdout)
-  return { exitCode, stdout, stderr, next, merge }
+    const { next, merge } = parseEmit(stdout)
+    return { exitCode, stdout, stderr, next, merge }
+  } finally {
+    await unlink(ctxPath).catch(() => {})
+  }
 }

@@ -11,7 +11,7 @@ function ctx(node: ChartNode): RunCtx {
 }
 
 test("builtins are registered", () => {
-  for (const t of ["end", "source", "shell", "decision"]) expect(hasNodeType(t)).toBe(true)
+  for (const t of ["end", "source", "shell", "decision", "api"]) expect(hasNodeType(t)).toBe(true)
 })
 
 test("end node returns terminal result with outcome", async () => {
