@@ -27,3 +27,12 @@ test("defaults port and reads --port override", () => {
 test("invalid context json throws a clear error", () => {
   expect(() => parseArgs(["submit", "demo", "--context", "{bad"])).toThrow(/context/)
 })
+
+test("parses signal command with next and merge", () => {
+  const a = parseArgs(["signal", "agency", "m1", "--next", "pass", "--merge", '{"v":1}'])
+  expect(a.cmd).toBe("signal")
+  expect(a.chart).toBe("agency")
+  expect(a.marble).toBe("m1")
+  expect(a.next).toBe("pass")
+  expect(a.merge).toEqual({ v: 1 })
+})

@@ -11,6 +11,7 @@ const CORS = {
 //   POST /api/charts/:name/marbles        { context?, workpiece?, start? }
 //   GET  /api/charts/:name/marbles
 //   GET  /api/charts/:name/marbles/:id
+//   POST /api/charts/:name/marbles/:id/signal   (resume a blocked marble)
 //   GET  /api/charts/:name/state          (bounded live view aggregate; polled by the canvas page)
 // All responses send permissive CORS so the Tinstar-served canvas page can poll.
 export function createControlApi(daemon: Daemon, port: number) {
@@ -36,6 +37,12 @@ export function createControlApi(daemon: Daemon, port: number) {
 
         if (p[0] === "api" && p[1] === "charts" && p[2] && p[3] === "marbles") {
           const name = p[2]
+          // POST single-marble signal
+          if (req.method === "POST" && p[4] && p[5] === "signal") {
+            const body = (await req.json().catch(() => ({}))) as any
+            await daemon.signal(name, p[4], { next: body.next, merge: body.merge })
+            return json({ ok: true })
+          }
           if (req.method === "GET" && p[4]) {
             const m = await daemon.marble(name, p[4])
             return m ? json(m) : json({ error: "marble not found" }, 404)

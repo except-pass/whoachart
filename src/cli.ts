@@ -3,7 +3,10 @@ export const DEFAULT_PORT = 5330
 export interface CliArgs {
   cmd: string
   chart?: string
+  marble?: string
   context?: Record<string, unknown>
+  merge?: Record<string, unknown>
+  next?: string
   workpiece?: string
   start?: string
   port: number
@@ -24,6 +27,15 @@ export function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = { cmd, port: flags.has("port") ? Number(flags.get("port")) : DEFAULT_PORT }
 
   if (cmd === "submit" || cmd === "marbles") args.chart = positional[1]
+  if (cmd === "signal") { args.chart = positional[1]; args.marble = positional[2] }
+  if (flags.has("next")) args.next = flags.get("next")
+  if (flags.has("merge")) {
+    try {
+      args.merge = JSON.parse(flags.get("merge")!)
+    } catch (err) {
+      throw new Error(`invalid --merge JSON: ${err}`)
+    }
+  }
   if (flags.has("workpiece")) args.workpiece = flags.get("workpiece")
   if (flags.has("start")) args.start = flags.get("start")
   if (flags.has("context")) {
@@ -54,8 +66,16 @@ async function main(argv: string[]): Promise<void> {
     if (!a.chart) throw new Error("usage: whoachart marbles <chart>")
     const res = await fetch(`${base}/api/charts/${a.chart}/marbles`)
     console.log(JSON.stringify(await res.json(), null, 2))
+  } else if (a.cmd === "signal") {
+    if (!a.chart || !a.marble) throw new Error("usage: whoachart signal <chart> <marble> --next <edge> [--merge json]")
+    const res = await fetch(`${base}/api/charts/${a.chart}/marbles/${a.marble}/signal`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ next: a.next, merge: a.merge }),
+    })
+    console.log(JSON.stringify(await res.json(), null, 2))
   } else {
-    console.log("usage: whoachart <charts|submit|marbles> [...]  (--port N)")
+    console.log("usage: whoachart <charts|submit|marbles|signal> [...]  (--port N)")
   }
 }
 
