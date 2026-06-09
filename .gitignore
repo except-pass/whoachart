@@ -15,3 +15,7 @@ settings.yaml
 *.png
 *.dot
 *.svg
+
+node_modules/
+.whoachart/
+*.tmp
