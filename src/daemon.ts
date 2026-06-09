@@ -5,11 +5,41 @@ import { registerBuiltins } from "./nodeTypes"
 import { makeAgentNode } from "./nodeTypes/agent"
 import { hasNodeType, registerNodeType } from "./registry"
 import { MarbleStore } from "./store"
-import { Engine, newMarble } from "./engine"
+import { Engine, newMarble, type EngineEvent } from "./engine"
 import { ViewBridge } from "./view/bridge"
 import type { ViewSnapshot } from "./view/viewState"
-import type { ArtifactSink, SessionLauncher } from "./tinstar"
+import type { ArtifactSink, SessionLauncher, SpawnSessionOpts } from "./tinstar"
 import type { Chart, Marble } from "./types"
+
+// One timestamped line per lifecycle event — the operator audit trail.
+function logLine(chart: string, msg: string): void {
+  console.log(`[whoachart] ${new Date().toISOString()} ${chart} ${msg}`)
+}
+
+function fmtEvent(e: EngineEvent): string {
+  switch (e.type) {
+    case "enter": return `enter marble=${e.marble} node=${e.node}`
+    case "blocked": return `blocked marble=${e.marble} node=${e.node} (awaiting signal)`
+    case "signaled": return `resumed marble=${e.marble} node=${e.node} next=${e.next ?? "-"}`
+    case "traverse": return `traverse marble=${e.marble} ${e.from}->${e.to}${e.edge ? ` edge=${e.edge}` : ""}`
+    case "end": return `end marble=${e.marble} node=${e.node} outcome=${e.outcome}`
+    case "failed": return `FAILED marble=${e.marble} node=${e.node} error=${e.error.split("\n")[0]}`
+  }
+}
+
+function loggingLauncher(inner: SessionLauncher): SessionLauncher {
+  return {
+    async spawnSession(opts: SpawnSessionOpts) {
+      const ref = await inner.spawnSession(opts)
+      logLine("-", `session spawned name=${ref.name}`)
+      return ref
+    },
+    async stopSession(name: string) {
+      logLine("-", `session stopping name=${name}`)
+      await inner.stopSession(name)
+    },
+  }
+}
 
 export interface DaemonOpts {
   charts: string[]
@@ -47,14 +77,16 @@ function findStart(chart: Chart): string {
 
 export class Daemon {
   private runtimes = new Map<string, ChartRuntime>()
+  private launcher?: SessionLauncher
 
   constructor(private opts: DaemonOpts) {}
 
   async start(): Promise<void> {
     if (!hasNodeType("end")) registerBuiltins()
     const baseUrl = this.opts.baseUrl ?? "http://localhost:5330"
+    this.launcher = this.opts.launcher ? loggingLauncher(this.opts.launcher) : undefined
     if (!hasNodeType("agent")) {
-      const launcher: SessionLauncher = this.opts.launcher ?? {
+      const launcher: SessionLauncher = this.launcher ?? {
         spawnSession: async () => { throw new Error("no session launcher configured (agent nodes need one)") },
         stopSession: async () => {},
       }
@@ -71,6 +103,7 @@ export class Daemon {
         store,
         concurrency: this.opts.concurrency,
         onChange: (m) => bridge.update(m),
+        onEvent: (e) => logLine(chart.name, fmtEvent(e)),
       })
       bridge.seed(await store.all())
       await bridge.start()
@@ -92,6 +125,7 @@ export class Daemon {
   async submit(name: string, opts: SubmitOpts = {}): Promise<Marble> {
     const rt = this.rt(name)
     const m = newMarble(name, opts.start ?? rt.start, opts.context ?? {}, opts.workpiece)
+    logLine(name, `marble submitted id=${m.id} start=${m.node}`)
     await rt.engine.submit(m)
     return m
   }
@@ -108,16 +142,17 @@ export class Daemon {
   // marble's agent session unless the node opts into keep_session.
   async signal(name: string, id: string, sig: { next?: string; merge?: Record<string, unknown> } = {}): Promise<void> {
     const rt = this.rt(name)
+    logLine(name, `signal received marble=${id} next=${sig.next ?? "-"}`)
     const before = await rt.store.load(id)
     await rt.engine.signal(id, sig)
     const session = before?.context._session
-    if (typeof session === "string" && session && this.opts.launcher) {
+    if (typeof session === "string" && session && this.launcher) {
       // Only tear down when the node we just resumed is the agent that owns
       // the session — a later non-agent block would otherwise re-stop a stale
       // _session left in context.
       const node = rt.chart.nodes.find((n) => n.id === before!.node)
       if (node?.type === "agent" && (node.config as any).keep_session !== true) {
-        void this.opts.launcher.stopSession(session)
+        void this.launcher.stopSession(session)
       }
     }
   }

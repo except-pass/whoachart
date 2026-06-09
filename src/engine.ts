@@ -4,12 +4,23 @@ import { runShell } from "./context"
 import { MarbleStore } from "./store"
 import { genId, now } from "./util"
 
+// Structured lifecycle events — the observability seam. The daemon logs these;
+// a future SSE feed can forward them verbatim.
+export type EngineEvent =
+  | { type: "enter"; marble: string; node: string }
+  | { type: "blocked"; marble: string; node: string }
+  | { type: "signaled"; marble: string; node: string; next?: string }
+  | { type: "traverse"; marble: string; from: string; to: string; edge?: string }
+  | { type: "end"; marble: string; node: string; outcome: string }
+  | { type: "failed"; marble: string; node: string; error: string }
+
 export interface EngineOpts {
   chart: Chart
   store: MarbleStore
   concurrency?: number
   maxSteps?: number
   onChange?: (m: Marble) => void
+  onEvent?: (e: EngineEvent) => void
 }
 
 export function newMarble(
@@ -81,9 +92,14 @@ export class Engine {
     if (!m) throw new Error(`unknown marble: ${id}`)
     if (m.status !== "blocked") throw new Error(`marble ${id} is not blocked (status: ${m.status})`)
     this.pendingSignals.set(id, { next: sig.next, merge: sig.merge })
+    this.emit({ type: "signaled", marble: m.id, node: m.node, next: sig.next })
     m.status = "queued"
     await this.persist(m)
     this.enqueue(m)
+  }
+
+  private emit(e: EngineEvent): void {
+    this.opts.onEvent?.(e)
   }
 
   drain(): Promise<void> {
@@ -171,6 +187,7 @@ export class Engine {
     try {
       const node = this.node(m.node)
       m.status = "running"
+      this.emit({ type: "enter", marble: m.id, node: node.id })
       await this.persist(m)
 
       const pending = this.pendingSignals.get(m.id)
@@ -187,6 +204,7 @@ export class Engine {
       if (result.end || node.type === "end") {
         m.context._outcome = result.endOutcome ?? "success" // _outcome is reserved
         m.status = result.endOutcome === "fail" ? "failed" : "done"
+        this.emit({ type: "end", marble: m.id, node: node.id, outcome: result.endOutcome ?? "success" })
         await this.persist(m)
         this.inFlight.delete(m.id)
         return
@@ -194,6 +212,7 @@ export class Engine {
 
       if (result.block) {
         m.status = "blocked"
+        this.emit({ type: "blocked", marble: m.id, node: node.id })
         await this.persist(m)
         this.inFlight.delete(m.id)
         return
@@ -203,6 +222,7 @@ export class Engine {
       if (!edge) {
         m.status = "failed"
         m.error = `no matching edge from ${node.id} (next=${result.next ?? "-"})`
+        this.emit({ type: "failed", marble: m.id, node: node.id, error: m.error })
         await this.persist(m)
         this.inFlight.delete(m.id)
         return
@@ -213,10 +233,12 @@ export class Engine {
 
       m.node = edge.to
       m.history.push(edge.to)
+      this.emit({ type: "traverse", marble: m.id, from: node.id, to: edge.to, edge: edge.name })
 
       if (m.history.length > this.maxSteps) {
         m.status = "failed"
         m.error = "max steps exceeded (cycle guard)"
+        this.emit({ type: "failed", marble: m.id, node: m.node, error: m.error })
         await this.persist(m)
         this.inFlight.delete(m.id)
         return
@@ -229,6 +251,7 @@ export class Engine {
     } catch (err) {
       m.status = "failed"
       m.error = err instanceof Error ? (err.stack ?? err.message) : String(err)
+      this.emit({ type: "failed", marble: m.id, node: m.node, error: m.error })
       try {
         await this.persist(m)
       } catch (persistErr) {
