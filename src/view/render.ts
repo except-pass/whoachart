@@ -1,4 +1,4 @@
-import type { Chart, Marble } from "../types"
+import type { Chart } from "../types"
 import type { Layout, NodeBox } from "./layout"
 
 function esc(s: string): string {
@@ -26,8 +26,7 @@ svg{width:100%;height:100%;display:block}
 .node{fill:var(--node);stroke-width:1.5}
 .nname{fill:var(--ink);font:600 13px system-ui;text-anchor:middle}
 .nsub{fill:var(--dim);font:10px monospace;text-anchor:middle}
-.chip circle{fill:#0b1118;stroke:var(--cyan);stroke-width:1}
-.chip text{fill:var(--cyan);font:10px monospace;text-anchor:middle}
+.endcount{fill:var(--cyan);font:600 11px monospace}
 .marble{stroke-width:1.5}
 .marble.queued{fill:#3aa;stroke:#0a6b6b}
 .marble.running,.marble.blocked{fill:#a78bfa;stroke:#7c6cf0}
@@ -35,18 +34,57 @@ svg{width:100%;height:100%;display:block}
 .marble.failed{fill:#ef4444;stroke:#7f1d1d}
 `
 
+// The client runtime: polls the daemon state endpoint and reconciles marble
+// <circle>s, moving them with CSS transitions (smooth glide, never a reload).
+// Bounded by design — only in-flight marbles + the last N completed per node.
+const CLIENT_JS = `
+const NS="http://www.w3.org/2000/svg";
+const mg=document.getElementById("marbles");
+const cg=document.getElementById("counts");
+const els=new Map();    // marble id -> circle
+const counts=new Map(); // node id -> text
+function cx(b){return b.x+b.w/2;}
+function slot(b,i,n){const shown=Math.min(n,8);return {x:cx(b)-(shown-1)*9+(i%8)*18, y:b.y+b.h+13};}
+function upsert(id,status,x,y){
+  let el=els.get(id);
+  if(!el){
+    el=document.createElementNS(NS,"circle");
+    el.setAttribute("r","7");
+    el.style.transition="transform .6s cubic-bezier(.4,0,.2,1), opacity .4s";
+    el.style.opacity="0";
+    mg.appendChild(el); els.set(id,el);
+    requestAnimationFrame(()=>{el.style.opacity="1";});
+  }
+  el.setAttribute("class","marble "+status);
+  el.style.transform="translate("+x+"px,"+y+"px)";
+}
+function setCount(node,total){
+  const b=LAYOUT.boxes[node]; if(!b)return;
+  let t=counts.get(node);
+  if(!t){t=document.createElementNS(NS,"text");t.setAttribute("class","endcount");t.setAttribute("x",cx(b));t.setAttribute("y",b.y-8);t.setAttribute("text-anchor","middle");cg.appendChild(t);counts.set(node,t);}
+  t.textContent="×"+total;
+}
+async function tick(){
+  let s; try{const r=await fetch(STATE_URL,{cache:"no-store"});s=await r.json();}catch(e){return;}
+  const seen=new Set();
+  const groups={};
+  for(const m of s.live){(groups[m.node]=groups[m.node]||[]).push(m);}
+  for(const node in groups){const b=LAYOUT.boxes[node];if(!b)continue;groups[node].forEach((m,i)=>{const p=slot(b,i,groups[node].length);upsert(m.id,m.status,p.x,p.y);seen.add(m.id);});}
+  for(const node in s.ends){const info=s.ends[node];const b=LAYOUT.boxes[node];if(!b)continue;info.recent.forEach((rm,i)=>{const p=slot(b,i,info.recent.length);upsert(rm.id,rm.status,p.x,p.y);seen.add(rm.id);});setCount(node,info.total);}
+  for(const [id,el] of els){if(!seen.has(id)){el.style.opacity="0";setTimeout(()=>el.remove(),400);els.delete(id);}}
+  const lc=document.getElementById("livecount");if(lc)lc.textContent=s.live.length;
+}
+setInterval(tick,600); tick();
+`
+
 function center(b: NodeBox): { x: number; y: number } {
   return { x: b.x + b.w / 2, y: b.y + b.h / 2 }
 }
 
-export function renderChart(chart: Chart, marbles: Marble[], layout: Layout): string {
-  const byNode = new Map<string, Marble[]>()
-  for (const m of marbles) {
-    const a = byNode.get(m.node)
-    if (a) a.push(m)
-    else byNode.set(m.node, [m])
-  }
-
+// Render the STABLE page shell once. Marbles are not drawn server-side — the
+// embedded client polls STATE_URL and animates them. The page is POSTed once
+// and never replaced, so there is no flashing.
+export function renderShell(chart: Chart, layout: Layout, stateUrl: string): string {
   let edgeSvg = ""
   for (const e of chart.edges) {
     const a = layout.boxes.get(e.from)
@@ -67,39 +105,36 @@ export function renderChart(chart: Chart, marbles: Marble[], layout: Layout): st
     const b = layout.boxes.get(n.id)
     if (!b) continue
     const color = n.color ?? TYPE_COLOR[n.type] ?? "#2a3340"
-    const cx = b.x + b.w / 2
+    const ncx = b.x + b.w / 2
     nodeSvg += `<g>`
     nodeSvg += `<rect class="node" x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="11" stroke="${color}"/>`
-    nodeSvg += `<text class="nname" x="${cx}" y="${b.y + b.h / 2 - 1}">${esc(n.name ?? n.id)}</text>`
-    nodeSvg += `<text class="nsub" x="${cx}" y="${b.y + b.h / 2 + 14}">${esc(n.type)}</text>`
-
-    const ms = byNode.get(n.id) ?? []
-    if (ms.length > 0) {
-      nodeSvg += `<g class="chip"><circle cx="${b.x + 11}" cy="${b.y + 11}" r="9"/><text x="${b.x + 11}" y="${b.y + 14}">${ms.length}</text></g>`
-      const shown = Math.min(ms.length, 6)
-      ms.slice(0, 6).forEach((m, i) => {
-        const mx = cx - (shown - 1) * 9 + i * 18
-        const my = b.y + b.h + 13
-        const r = m.status === "running" || m.status === "blocked" ? 9 : 7
-        nodeSvg += `<circle class="marble ${m.status}" cx="${mx}" cy="${my}" r="${r}"/>`
-      })
-    }
+    nodeSvg += `<text class="nname" x="${ncx}" y="${b.y + b.h / 2 - 1}">${esc(n.name ?? n.id)}</text>`
+    nodeSvg += `<text class="nsub" x="${ncx}" y="${b.y + b.h / 2 + 14}">${esc(n.type)}</text>`
     nodeSvg += `</g>`
   }
 
-  const live = marbles.filter((m) => m.status === "queued" || m.status === "running" || m.status === "blocked").length
-  const done = marbles.filter((m) => m.status === "done").length
+  // Serialize layout boxes (a Map) into a plain object for the client.
+  const boxes: Record<string, NodeBox> = {}
+  for (const [id, b] of layout.boxes) boxes[id] = b
+  const layoutJson = JSON.stringify({ boxes, width: layout.width, height: layout.height })
 
   return `<!DOCTYPE html>
 <html class="dark"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><style>${CSS}</style></head>
 <body>
-<div class="bar">whoachart ▸ ${esc(chart.name)} · ${live} live · ${done} done</div>
+<div class="bar">whoachart ▸ ${esc(chart.name)} · <span id="livecount">0</span> live</div>
 <div class="wrap">
 <svg viewBox="0 0 ${layout.width} ${layout.height}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
 <defs><marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#3a4a5a"/></marker></defs>
 ${edgeSvg}
 ${nodeSvg}
+<g id="counts"></g>
+<g id="marbles"></g>
 </svg>
 </div>
+<script>
+const LAYOUT=${layoutJson};
+const STATE_URL=${JSON.stringify(stateUrl)};
+${CLIENT_JS}
+</script>
 </body></html>`
 }

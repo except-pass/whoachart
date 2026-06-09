@@ -1,0 +1,64 @@
+# Demo chart: trivial compute + sleeps so marbles visibly dwell on each node.
+name: marble-demo
+nodes:
+  - id: ingest
+    type: source
+    name: Intake
+    config:
+      trigger: api
+
+  - id: fetch
+    type: shell
+    name: Fetch
+    config:
+      on_enter: |
+        sleep 3
+        echo '{"merge":{"fetched":true}}'
+
+  - id: process
+    type: shell
+    name: Process
+    config:
+      on_enter: |
+        sleep 3
+        echo '{"merge":{"processed":true}}'
+
+  - id: check
+    type: decision
+    name: Quality OK?
+    config:
+      on_enter: |
+        sleep 2
+        if [ $((RANDOM % 4)) -eq 0 ]; then
+          echo '{"next":"reject"}'
+        else
+          echo '{"next":"accept"}'
+        fi
+
+  - id: publish
+    type: shell
+    name: Publish
+    config:
+      on_enter: |
+        sleep 2
+        echo published
+
+  - id: shipped
+    type: end
+    name: Shipped
+    config:
+      outcome: success
+
+  - id: rejected
+    type: end
+    name: Rejected
+    config:
+      outcome: fail
+
+edges:
+  - { from: ingest, to: fetch }
+  - { from: fetch, to: process }
+  - { from: process, to: check }
+  - { from: check, to: publish, name: accept }
+  - { from: check, to: rejected, name: reject }
+  - { from: publish, to: shipped }

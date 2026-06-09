@@ -28,7 +28,12 @@ async function main(): Promise<void> {
   const tinstarUrl = process.env.TINSTAR_URL ?? "http://localhost:5273"
 
   const charts = await resolveCharts(chartsSpec)
-  const daemon = new Daemon({ charts, storeDir, client: new TinstarClient(tinstarUrl) })
+  const daemon = new Daemon({
+    charts,
+    storeDir,
+    client: new TinstarClient(tinstarUrl),
+    baseUrl: `http://localhost:${port}`,
+  })
   await daemon.start()
   createControlApi(daemon, port)
   console.log(`[whoachart] daemon up on :${port} — charts: ${daemon.charts().join(", ") || "(none)"}`)

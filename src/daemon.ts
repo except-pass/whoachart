@@ -6,6 +6,7 @@ import { hasNodeType } from "./registry"
 import { MarbleStore } from "./store"
 import { Engine, newMarble } from "./engine"
 import { ViewBridge } from "./view/bridge"
+import type { ViewSnapshot } from "./view/viewState"
 import type { ArtifactSink } from "./tinstar"
 import type { Chart, Marble } from "./types"
 
@@ -14,6 +15,8 @@ export interface DaemonOpts {
   storeDir: string
   client: ArtifactSink
   concurrency?: number
+  // Base URL the canvas page uses to poll this daemon (its own origin).
+  baseUrl?: string
 }
 
 interface ChartRuntime {
@@ -49,7 +52,9 @@ export class Daemon {
       const chart = parseChart(await readFile(path, "utf8"))
       const store = new MarbleStore(join(this.opts.storeDir, chart.name))
       await store.init()
-      const bridge = new ViewBridge(this.opts.client, chart)
+      const baseUrl = this.opts.baseUrl ?? "http://localhost:5330"
+      const stateUrl = `${baseUrl}/api/charts/${chart.name}/state`
+      const bridge = new ViewBridge(this.opts.client, chart, stateUrl)
       const engine = new Engine({
         chart,
         store,
@@ -86,5 +91,11 @@ export class Daemon {
 
   async marble(name: string, id: string): Promise<Marble | null> {
     return this.rt(name).store.load(id)
+  }
+
+  // Bounded live view aggregate (in-flight marbles + per-end tallies) for the
+  // canvas page to poll. O(1) — does not scan the store.
+  snapshot(name: string): ViewSnapshot {
+    return this.rt(name).bridge.snapshot()
   }
 }

@@ -1,7 +1,21 @@
 import type { Daemon } from "./daemon"
 
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+}
+
+// Minimal HTTP control plane for the daemon. Routes:
+//   GET  /api/charts
+//   POST /api/charts/:name/marbles        { context?, workpiece?, start? }
+//   GET  /api/charts/:name/marbles
+//   GET  /api/charts/:name/marbles/:id
+//   GET  /api/charts/:name/state          (bounded live view aggregate; polled by the canvas page)
+// All responses send permissive CORS so the Tinstar-served canvas page can poll.
 export function createControlApi(daemon: Daemon, port: number) {
-  const json = (data: unknown, status = 200) => Response.json(data, { status })
+  const json = (data: unknown, status = 200) =>
+    Response.json(data, { status, headers: CORS })
 
   return Bun.serve({
     port,
@@ -9,9 +23,15 @@ export function createControlApi(daemon: Daemon, port: number) {
       const url = new URL(req.url)
       const p = url.pathname.split("/").filter(Boolean)
 
+      if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS })
+
       try {
         if (req.method === "GET" && url.pathname === "/api/charts") {
           return json({ charts: daemon.charts() })
+        }
+
+        if (p[0] === "api" && p[1] === "charts" && p[2] && p[3] === "state" && req.method === "GET") {
+          return json(daemon.snapshot(p[2]))
         }
 
         if (p[0] === "api" && p[1] === "charts" && p[2] && p[3] === "marbles") {
