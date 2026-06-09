@@ -42,15 +42,18 @@ const NS="http://www.w3.org/2000/svg";
 const mg=document.getElementById("marbles");
 const cg=document.getElementById("counts");
 const els=new Map();    // marble id -> circle
+const nodeOf=new Map(); // marble id -> node id (for fly-into-counter on drop)
 const counts=new Map(); // node id -> text
 function cx(b){return b.x+b.w/2;}
 function slot(b,i,n){const shown=Math.min(n,8);return {x:cx(b)-(shown-1)*9+(i%8)*18, y:b.y+b.h+13};}
-function upsert(id,status,x,y){
+function counterPos(b){return {x:cx(b), y:b.y-4};}
+function upsert(id,status,x,y,node){
+  nodeOf.set(id,node);
   let el=els.get(id);
   if(!el){
     el=document.createElementNS(NS,"circle");
     el.setAttribute("r","7");
-    el.style.transition="transform .6s cubic-bezier(.4,0,.2,1), opacity .4s";
+    el.style.transition="transform .6s cubic-bezier(.4,0,.2,1), opacity .45s";
     el.style.opacity="0";
     mg.appendChild(el); els.set(id,el);
     requestAnimationFrame(()=>{el.style.opacity="1";});
@@ -60,18 +63,28 @@ function upsert(id,status,x,y){
 }
 function setCount(node,total){
   const b=LAYOUT.boxes[node]; if(!b)return;
+  const cp=counterPos(b);
   let t=counts.get(node);
-  if(!t){t=document.createElementNS(NS,"text");t.setAttribute("class","endcount");t.setAttribute("x",cx(b));t.setAttribute("y",b.y-8);t.setAttribute("text-anchor","middle");cg.appendChild(t);counts.set(node,t);}
-  t.textContent="×"+total;
+  if(!t){t=document.createElementNS(NS,"text");t.setAttribute("class","endcount");t.setAttribute("x",cp.x);t.setAttribute("y",cp.y);t.setAttribute("text-anchor","middle");t.style.transition="transform .25s ease";t.style.transformOrigin=cp.x+"px "+cp.y+"px";cg.appendChild(t);counts.set(node,t);}
+  const next="×"+total;
+  if(t.textContent!==next){ t.textContent=next; t.style.transform="scale(1.6)"; setTimeout(()=>{t.style.transform="scale(1)";},170); }
 }
 async function tick(){
   let s; try{const r=await fetch(STATE_URL,{cache:"no-store"});s=await r.json();}catch(e){return;}
   const seen=new Set();
   const groups={};
   for(const m of s.live){(groups[m.node]=groups[m.node]||[]).push(m);}
-  for(const node in groups){const b=LAYOUT.boxes[node];if(!b)continue;groups[node].forEach((m,i)=>{const p=slot(b,i,groups[node].length);upsert(m.id,m.status,p.x,p.y);seen.add(m.id);});}
-  for(const node in s.ends){const info=s.ends[node];const b=LAYOUT.boxes[node];if(!b)continue;info.recent.forEach((rm,i)=>{const p=slot(b,i,info.recent.length);upsert(rm.id,rm.status,p.x,p.y);seen.add(rm.id);});setCount(node,info.total);}
-  for(const [id,el] of els){if(!seen.has(id)){el.style.opacity="0";setTimeout(()=>el.remove(),400);els.delete(id);}}
+  for(const node in groups){const b=LAYOUT.boxes[node];if(!b)continue;groups[node].forEach((m,i)=>{const p=slot(b,i,groups[node].length);upsert(m.id,m.status,p.x,p.y,node);seen.add(m.id);});}
+  for(const node in s.ends){const info=s.ends[node];const b=LAYOUT.boxes[node];if(!b)continue;info.recent.forEach((rm,i)=>{const p=slot(b,i,info.recent.length);upsert(rm.id,rm.status,p.x,p.y,node);seen.add(rm.id);});setCount(node,info.total);}
+  for(const [id,el] of els){
+    if(!seen.has(id)){
+      const n=nodeOf.get(id); const b=n&&LAYOUT.boxes[n];
+      if(b&&counts.has(n)){ const cp=counterPos(b); el.style.transform="translate("+cp.x+"px,"+cp.y+"px) scale(0.15)"; } // fly into the tally
+      el.style.opacity="0";
+      setTimeout(()=>el.remove(),600);
+      els.delete(id); nodeOf.delete(id);
+    }
+  }
   const lc=document.getElementById("livecount");if(lc)lc.textContent=s.live.length;
 }
 setInterval(tick,600); tick();
