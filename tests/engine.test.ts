@@ -2,10 +2,11 @@
 import { test, expect, beforeEach } from "bun:test"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
+import { z } from "zod"
 import { Engine, newMarble } from "../src/engine"
 import { MarbleStore } from "../src/store"
 import { registerBuiltins } from "../src/nodeTypes"
-import { clearRegistry } from "../src/registry"
+import { clearRegistry, registerNodeType } from "../src/registry"
 import type { Chart, Marble } from "../src/types"
 
 beforeEach(() => { clearRegistry(); registerBuiltins() })
@@ -92,4 +93,56 @@ test("resume re-enqueues in-flight marbles from disk", async () => {
   await eng.resume()
   await eng.drain()
   expect((await st.load("r1"))?.status).toBe("done")
+})
+
+test("a throwing node fails the marble instead of stranding it", async () => {
+  registerNodeType({ type: "boom", configSchema: z.object({}).passthrough(), run: async () => { throw new Error("kaboom") } })
+  const chart: Chart = { name: "b", nodes: [{ id: "a", type: "boom", config: {} }], edges: [] }
+  const st = store(); await st.init()
+  const eng = new Engine({ chart, store: st })
+  const m = newMarble("b", "a")
+  await eng.submit(m); await eng.drain()
+  const f = await st.load(m.id)
+  expect(f?.status).toBe("failed")
+  expect(f?.error).toMatch(/kaboom/)
+})
+
+test("advancing to an unknown node fails the marble (guarded), no hang", async () => {
+  const chart: Chart = {
+    name: "dangle",
+    nodes: [{ id: "a", type: "shell", config: { on_enter: `echo hi` } }],
+    edges: [{ from: "a", to: "ghost" }], // ghost is not a real node
+  }
+  const st = store(); await st.init()
+  const eng = new Engine({ chart, store: st })
+  const m = newMarble("dangle", "a")
+  await eng.submit(m); await eng.drain()
+  const f = await st.load(m.id)
+  expect(f?.status).toBe("failed")
+  expect(f?.error).toMatch(/unknown node/)
+})
+
+test("submit + resume does not double-process the same marble", async () => {
+  let runs = 0
+  registerNodeType({
+    type: "count",
+    configSchema: z.object({}).passthrough(),
+    run: async () => { runs++; await new Promise((r) => setTimeout(r, 30)); return {} },
+  })
+  const chart: Chart = {
+    name: "c",
+    nodes: [
+      { id: "a", type: "count", config: {} },
+      { id: "z", type: "end", config: { outcome: "success" } },
+    ],
+    edges: [{ from: "a", to: "z" }],
+  }
+  const st = store(); await st.init()
+  const eng = new Engine({ chart, store: st })
+  const m = newMarble("c", "a")
+  await eng.submit(m)
+  await eng.resume() // reads m from disk mid-flight; must NOT enqueue a duplicate
+  await eng.drain()
+  expect(runs).toBe(1)
+  expect((await st.load(m.id))?.status).toBe("done")
 })

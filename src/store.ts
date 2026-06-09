@@ -14,7 +14,7 @@ export class MarbleStore {
   }
 
   async save(m: Marble): Promise<void> {
-    const tmp = this.path(m.id) + ".tmp"
+    const tmp = `${this.path(m.id)}.${process.pid}.${crypto.randomUUID()}.tmp`
     await writeFile(tmp, JSON.stringify(m, null, 2))
     await rename(tmp, this.path(m.id)) // atomic replace
   }

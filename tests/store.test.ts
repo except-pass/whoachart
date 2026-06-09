@@ -37,3 +37,11 @@ test("all returns every saved marble", async () => {
   const all = await store.all()
   expect(all.map((m) => m.id).sort()).toEqual(["m1", "m2"])
 })
+
+test("concurrent saves of the same id do not crash", async () => {
+  const s = new MarbleStore(tmpDir())
+  await s.init()
+  const m = marble("x")
+  await Promise.all([s.save(m), s.save(m), s.save(m)])
+  expect((await s.load("x"))?.id).toBe("x")
+})

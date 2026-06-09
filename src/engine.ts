@@ -1,4 +1,3 @@
-// src/engine.ts
 import type { Chart, ChartEdge, ChartNode, Marble, NodeResult } from "./types"
 import { getNodeType } from "./registry"
 import { runShell } from "./context"
@@ -28,17 +27,28 @@ export function newMarble(
 
 async function withTimeout<T>(p: Promise<T>, ms?: number): Promise<T> {
   if (!ms) return p
-  return await Promise.race([
-    p,
-    new Promise<T>((_, rej) => setTimeout(() => rej(new Error("activity timeout")), ms)),
-  ])
+  let t: ReturnType<typeof setTimeout> | undefined
+  const timer = new Promise<T>((_, rej) => {
+    t = setTimeout(() => rej(new Error("activity timeout")), ms)
+  })
+  try {
+    return await Promise.race([p, timer])
+  } finally {
+    if (t) clearTimeout(t)
+  }
 }
 
 export class Engine {
   private running = 0
   private queue: Marble[] = []
+  private inFlight = new Set<string>()
+  private readonly cap: number
+  private readonly maxSteps: number
 
-  constructor(private opts: EngineOpts) {}
+  constructor(private opts: EngineOpts) {
+    this.cap = opts.concurrency ?? 4
+    this.maxSteps = opts.maxSteps ?? 1000
+  }
 
   private node(id: string): ChartNode {
     const n = this.opts.chart.nodes.find((n) => n.id === id)
@@ -70,14 +80,18 @@ export class Engine {
     })
   }
 
+  // Enqueue a FRESH marble (submit/resume). Skips if one with the same id is
+  // already queued or running, so submit+resume (or double resume) can't
+  // double-process the same marble.
   private enqueue(m: Marble): void {
+    if (this.inFlight.has(m.id)) return
+    this.inFlight.add(m.id)
     this.queue.push(m)
     this.pump()
   }
 
   private pump(): void {
-    const cap = this.opts.concurrency ?? 4
-    while (this.running < cap && this.queue.length > 0) {
+    while (this.running < this.cap && this.queue.length > 0) {
       const m = this.queue.shift()!
       this.running++
       this.step(m).finally(() => {
@@ -90,7 +104,8 @@ export class Engine {
   private async persist(m: Marble): Promise<void> {
     m.updatedAt = now()
     await this.opts.store.save(m)
-    this.opts.onChange?.(m)
+    // Hand consumers a snapshot, not the live object the engine keeps mutating.
+    this.opts.onChange?.(structuredClone(m))
   }
 
   private async execNode(node: ChartNode, m: Marble): Promise<NodeResult> {
@@ -125,59 +140,80 @@ export class Engine {
     return out.find((e) => e.default)
   }
 
-  // Runs exactly one node-step, then re-enqueues if the marble advanced.
-  private async step(m: Marble): Promise<void> {
-    const node = this.node(m.node)
-    m.status = "running"
-    await this.persist(m)
+  // Run a side-effect hook; log (but do not fail the marble on) a non-zero exit.
+  private async runHook(script: string, m: Marble, node: ChartNode): Promise<void> {
+    const out = await runShell(script, m, node)
+    if (out.exitCode !== 0) {
+      console.error(
+        `[whoachart] hook on node ${node.id} (marble ${m.id}) exited ${out.exitCode}: ${out.stderr.trim()}`,
+      )
+    }
+  }
 
-    let result: NodeResult
+  // Runs exactly one node-step, then re-enqueues if the marble advanced.
+  // The ENTIRE body is guarded: any throw marks the marble failed and persists,
+  // instead of stranding it in "running" and emitting an unhandled rejection.
+  private async step(m: Marble): Promise<void> {
     try {
-      result = await this.execNode(node, m)
+      const node = this.node(m.node)
+      m.status = "running"
+      await this.persist(m)
+
+      const result = await this.execNode(node, m)
+
+      if (result.merge) m.context = { ...m.context, ...result.merge }
+
+      if (result.end || node.type === "end") {
+        m.context._outcome = result.endOutcome ?? "success" // _outcome is reserved
+        m.status = result.endOutcome === "fail" ? "failed" : "done"
+        await this.persist(m)
+        this.inFlight.delete(m.id)
+        return
+      }
+
+      if (result.block) {
+        m.status = "blocked"
+        await this.persist(m)
+        this.inFlight.delete(m.id)
+        return
+      }
+
+      const edge = this.resolveEdge(node, result)
+      if (!edge) {
+        m.status = "failed"
+        m.error = `no matching edge from ${node.id} (next=${result.next ?? "-"})`
+        await this.persist(m)
+        this.inFlight.delete(m.id)
+        return
+      }
+
+      if (node.on_leave) await this.runHook(node.on_leave, m, node)
+      if (edge.on_traversal) await this.runHook(edge.on_traversal, m, node)
+
+      m.node = edge.to
+      m.history.push(edge.to)
+
+      if (m.history.length > this.maxSteps) {
+        m.status = "failed"
+        m.error = "max steps exceeded (cycle guard)"
+        await this.persist(m)
+        this.inFlight.delete(m.id)
+        return
+      }
+
+      await this.persist(m)
+      // Continuation: marble stays in-flight; queue its next step directly.
+      this.queue.push(m)
+      this.pump()
     } catch (err) {
       m.status = "failed"
-      m.error = String(err)
-      await this.persist(m)
-      return
+      m.error = err instanceof Error ? (err.stack ?? err.message) : String(err)
+      try {
+        await this.persist(m)
+      } catch (persistErr) {
+        console.error(`[whoachart] failed to persist failed marble ${m.id}: ${persistErr}`)
+      }
+      this.inFlight.delete(m.id)
     }
-
-    if (result.merge) m.context = { ...m.context, ...result.merge }
-
-    if (result.end || node.type === "end") {
-      m.context._outcome = result.endOutcome ?? "success"
-      m.status = result.endOutcome === "fail" ? "failed" : "done"
-      await this.persist(m)
-      return
-    }
-
-    if (result.block) {
-      m.status = "blocked"
-      await this.persist(m)
-      return
-    }
-
-    const edge = this.resolveEdge(node, result)
-    if (!edge) {
-      m.status = "failed"
-      m.error = `no matching edge from ${node.id} (next=${result.next ?? "-"})`
-      await this.persist(m)
-      return
-    }
-
-    if (node.on_leave) await runShell(node.on_leave, m, node)
-    if (edge.on_traversal) await runShell(edge.on_traversal, m, node)
-
-    m.node = edge.to
-    m.history.push(edge.to)
-
-    if (m.history.length > (this.opts.maxSteps ?? 1000)) {
-      m.status = "failed"
-      m.error = "max steps exceeded (cycle guard)"
-      await this.persist(m)
-      return
-    }
-
-    await this.persist(m)
-    this.enqueue(m)
   }
 }
