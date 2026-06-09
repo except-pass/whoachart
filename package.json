@@ -4,7 +4,11 @@
   "type": "module",
   "module": "src/run.ts",
   "scripts": {
-    "test": "bun test"
+    "test": "bun test",
+    "start": "bun run src/main.ts"
+  },
+  "bin": {
+    "whoachart": "src/cli.ts"
   },
   "dependencies": {
     "yaml": "^2.5.0",
