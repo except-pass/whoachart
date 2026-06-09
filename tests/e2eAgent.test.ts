@@ -38,16 +38,16 @@ beforeEach(() => clearRegistry())
 test("agent-review example: marble blocks, fake agent signals, marble ships, session stopped", async () => {
   const launcher = new AutoAgent()
   const storeDir = join(tmpdir(), "wc-e2ea-" + crypto.randomUUID().slice(0, 8))
-  const port = 40000 + Math.floor(Math.random() * 1000)
   const daemon = new Daemon({
     charts: ["examples/agent-review.yaml"],
     storeDir,
     client: new FakeSink(),
     launcher,
-    baseUrl: `http://localhost:${port}`,
+    baseUrl: "http://localhost:0", // patched below once the server binds
   })
+  const server = createControlApi(daemon, 0)
+  ;(daemon as any).opts.baseUrl = `http://localhost:${server.port}`
   await daemon.start()
-  const server = createControlApi(daemon, port)
   try {
     const m = await daemon.submit("agent-review", { context: { title: "Q3 post" } })
     // wait for: reach agent node → block → auto-signal → resume → done

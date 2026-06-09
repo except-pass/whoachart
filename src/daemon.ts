@@ -112,9 +112,13 @@ export class Daemon {
     await rt.engine.signal(id, sig)
     const session = before?.context._session
     if (typeof session === "string" && session && this.opts.launcher) {
+      // Only tear down when the node we just resumed is the agent that owns
+      // the session — a later non-agent block would otherwise re-stop a stale
+      // _session left in context.
       const node = rt.chart.nodes.find((n) => n.id === before!.node)
-      const keep = node?.type === "agent" && (node.config as any).keep_session === true
-      if (!keep) void this.opts.launcher.stopSession(session)
+      if (node?.type === "agent" && (node.config as any).keep_session !== true) {
+        void this.opts.launcher.stopSession(session)
+      }
     }
   }
 
