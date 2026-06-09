@@ -1,0 +1,47 @@
+# A headless demo: a marble flows through a build/test pipeline.
+# Routing is node-centric — the `test` decision emits the next edge name.
+name: build-pipeline
+nodes:
+  - id: ingest
+    type: source
+    name: New build
+    config:
+      trigger: api
+
+  - id: build
+    type: shell
+    name: Build
+    config:
+      on_enter: |
+        echo "building..."
+        echo '{"merge":{"built":true}}'
+
+  - id: test
+    type: decision
+    name: Tests pass?
+    config:
+      on_enter: |
+        ctx=$(cat "$WHOACHART_CONTEXT")
+        if echo "$ctx" | grep -q '"tests_pass":"yes"'; then
+          echo '{"next":"pass"}'
+        else
+          echo '{"next":"fail"}'
+        fi
+
+  - id: shipped
+    type: end
+    name: Shipped
+    config:
+      outcome: success
+
+  - id: halted
+    type: end
+    name: Halted
+    config:
+      outcome: fail
+
+edges:
+  - { from: ingest, to: build }
+  - { from: build, to: test }
+  - { from: test, to: shipped, name: pass, on_traversal: "echo shipping >&2" }
+  - { from: test, to: halted, name: fail }
