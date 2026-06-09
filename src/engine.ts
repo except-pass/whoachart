@@ -42,6 +42,7 @@ export class Engine {
   private running = 0
   private queue: Marble[] = []
   private inFlight = new Set<string>()
+  private pendingSignals = new Map<string, NodeResult>()
   private readonly cap: number
   private readonly maxSteps: number
 
@@ -70,6 +71,19 @@ export class Engine {
     for (const m of all) {
       if (m.status === "running" || m.status === "queued") this.enqueue(m)
     }
+  }
+
+  // Resume a blocked marble with an externally supplied result (e.g. an agent
+  // signaling done). The pending result substitutes for the node activity on
+  // the next step, so routing/hooks/persistence all run the normal path.
+  async signal(id: string, sig: { next?: string; merge?: Record<string, unknown> } = {}): Promise<void> {
+    const m = await this.opts.store.load(id)
+    if (!m) throw new Error(`unknown marble: ${id}`)
+    if (m.status !== "blocked") throw new Error(`marble ${id} is not blocked (status: ${m.status})`)
+    this.pendingSignals.set(id, { next: sig.next, merge: sig.merge })
+    m.status = "queued"
+    await this.persist(m)
+    this.enqueue(m)
   }
 
   drain(): Promise<void> {
@@ -159,7 +173,14 @@ export class Engine {
       m.status = "running"
       await this.persist(m)
 
-      const result = await this.execNode(node, m)
+      const pending = this.pendingSignals.get(m.id)
+      let result: NodeResult
+      if (pending) {
+        this.pendingSignals.delete(m.id)
+        result = pending
+      } else {
+        result = await this.execNode(node, m)
+      }
 
       if (result.merge) m.context = { ...m.context, ...result.merge }
 
