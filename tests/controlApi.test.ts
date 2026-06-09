@@ -55,7 +55,7 @@ test("POST /api/charts/:name/marbles submits a marble", async () => {
     body: JSON.stringify({ context: { x: 1 } }),
   })
   expect(res.status).toBe(201)
-  const body = await res.json()
+  const body = (await res.json()) as any
   expect(body.id).toBeTruthy()
 })
 
@@ -63,7 +63,7 @@ test("GET /api/charts/:name/marbles lists submitted marbles", async () => {
   await fetch(`${base}/api/charts/demo/marbles`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
   await new Promise((r) => setTimeout(r, 150))
   const res = await fetch(`${base}/api/charts/demo/marbles`)
-  const body = await res.json()
+  const body = (await res.json()) as any
   expect(Array.isArray(body.marbles)).toBe(true)
   expect(body.marbles.length).toBeGreaterThanOrEqual(1)
 })
