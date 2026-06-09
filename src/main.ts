@@ -28,10 +28,12 @@ async function main(): Promise<void> {
   const tinstarUrl = process.env.TINSTAR_URL ?? "http://localhost:5273"
 
   const charts = await resolveCharts(chartsSpec)
+  const client = new TinstarClient(tinstarUrl)
   const daemon = new Daemon({
     charts,
     storeDir,
-    client: new TinstarClient(tinstarUrl),
+    client,
+    launcher: client,
     baseUrl: `http://localhost:${port}`,
   })
   await daemon.start()
