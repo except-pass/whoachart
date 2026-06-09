@@ -1,0 +1,67 @@
+import { test, expect, beforeEach } from "bun:test"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
+import { Daemon } from "../src/daemon"
+import { createControlApi } from "../src/controlApi"
+import type { ArtifactRef, ArtifactPlacement, ArtifactSink, SessionLauncher, SpawnSessionOpts } from "../src/tinstar"
+import { clearRegistry } from "../src/registry"
+
+class FakeSink implements ArtifactSink {
+  async postArtifact(_h: string, _p?: ArtifactPlacement): Promise<ArtifactRef> { return { artifactId: "a", widgetId: "w" } }
+  async putArtifact(): Promise<boolean> { return true }
+  async deleteArtifact(): Promise<void> {}
+}
+
+// A launcher that behaves like a real agent: reads the signal URL out of its
+// brief and (after a beat) signals 'approve' through the control API — the
+// full round trip a Tinstar session would make.
+class AutoAgent implements SessionLauncher {
+  stopped: string[] = []
+  async spawnSession(o: SpawnSessionOpts) {
+    const url = o.prompt.match(/curl -X POST (\S+)/)?.[1]
+    if (url) {
+      setTimeout(() => {
+        void fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ next: "approve", merge: { reviewed_by: o.name } }),
+        })
+      }, 150)
+    }
+    return { name: o.name }
+  }
+  async stopSession(n: string) { this.stopped.push(n) }
+}
+
+beforeEach(() => clearRegistry())
+
+test("agent-review example: marble blocks, fake agent signals, marble ships, session stopped", async () => {
+  const launcher = new AutoAgent()
+  const storeDir = join(tmpdir(), "wc-e2ea-" + crypto.randomUUID().slice(0, 8))
+  const port = 40000 + Math.floor(Math.random() * 1000)
+  const daemon = new Daemon({
+    charts: ["examples/agent-review.yaml"],
+    storeDir,
+    client: new FakeSink(),
+    launcher,
+    baseUrl: `http://localhost:${port}`,
+  })
+  await daemon.start()
+  const server = createControlApi(daemon, port)
+  try {
+    const m = await daemon.submit("agent-review", { context: { title: "Q3 post" } })
+    // wait for: reach agent node → block → auto-signal → resume → done
+    let final = null as any
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 100))
+      final = await daemon.marble("agent-review", m.id)
+      if (final?.status === "done" || final?.status === "failed") break
+    }
+    expect(final?.status).toBe("done")
+    expect(final?.node).toBe("published")
+    expect(final?.context.reviewed_by).toContain("wc-agent-review-")
+    expect(launcher.stopped).toHaveLength(1)
+  } finally {
+    server.stop(true)
+  }
+})

@@ -1,0 +1,45 @@
+# A marble carries a piece of content to a REAL agent session for review.
+# The agent gets a narrow brief + the signal URL; the marble blocks (pulsing
+# agent face on the canvas) until the agent signals approve/reject.
+name: agent-review
+nodes:
+  - id: ingest
+    type: source
+    name: New draft
+    config:
+      trigger: api
+
+  - id: prep
+    type: shell
+    name: Prep
+    config:
+      on_enter: |
+        echo '{"merge":{"prepped":true}}'
+
+  - id: review
+    type: agent
+    name: Expert review
+    color: "#a78bfa"
+    config:
+      brief: >
+        Review the draft described in the context. Check it for factual
+        errors and tone. If acceptable, signal next=approve with a short
+        merge note; otherwise signal next=reject explaining why.
+
+  - id: published
+    type: end
+    name: Published
+    config:
+      outcome: success
+
+  - id: rejected
+    type: end
+    name: Rejected
+    config:
+      outcome: fail
+
+edges:
+  - { from: ingest, to: prep }
+  - { from: prep, to: review }
+  - { from: review, to: published, name: approve }
+  - { from: review, to: rejected, name: reject }
