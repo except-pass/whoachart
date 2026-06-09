@@ -29,6 +29,11 @@ svg{width:100%;height:100%;display:block}
 .endcount{fill:var(--cyan);font:600 11px monospace}
 .mlabel{font:700 7px monospace;fill:#06090d;pointer-events:none}
 .marble{cursor:default}
+.marble .face{display:none}
+.marble.agent .face{display:block}
+.marble.agent .mlabel{display:none}
+.marble.agent>circle{animation:agentpulse 1.2s ease-in-out infinite}
+@keyframes agentpulse{0%,100%{stroke-opacity:1}50%{stroke-opacity:.3}}
 `
 
 // The client runtime: polls the daemon state endpoint and reconciles marble
@@ -59,12 +64,18 @@ function upsert(id,status,x,y,node){
     g.style.opacity="0";
     const c=document.createElementNS(NS,"circle"); c.setAttribute("r","8"); c.setAttribute("fill",hue(id)); g.appendChild(c);
     const t=document.createElementNS(NS,"text"); t.setAttribute("class","mlabel"); t.setAttribute("text-anchor","middle"); t.setAttribute("y","2.6"); t.textContent=id.slice(0,2); g.appendChild(t);
+    const f=document.createElementNS(NS,"g"); f.setAttribute("class","face");
+    const e1=document.createElementNS(NS,"circle"); e1.setAttribute("cx","-2.4"); e1.setAttribute("cy","-1"); e1.setAttribute("r","1"); e1.setAttribute("fill","#06090d"); f.appendChild(e1);
+    const e2=document.createElementNS(NS,"circle"); e2.setAttribute("cx","2.4"); e2.setAttribute("cy","-1"); e2.setAttribute("r","1"); e2.setAttribute("fill","#06090d"); f.appendChild(e2);
+    const sm=document.createElementNS(NS,"path"); sm.setAttribute("d","M-2.6,2 q2.6,2.4 5.2,0"); sm.setAttribute("stroke","#06090d"); sm.setAttribute("stroke-width","1"); sm.setAttribute("fill","none"); sm.setAttribute("stroke-linecap","round"); f.appendChild(sm);
+    g.appendChild(f);
     const ti=document.createElementNS(NS,"title"); ti.textContent=id+" @ "+node; g.appendChild(ti);
     g._c=c; g._ti=ti;
     mg.appendChild(g); els.set(id,g);
     requestAnimationFrame(()=>{g.style.opacity="1";});
   }
   const r=ring(status); g._c.setAttribute("stroke",r[0]); g._c.setAttribute("stroke-width",String(r[1]));
+  g.setAttribute("class","marble"+(status==="blocked"?" agent":""));
   g._ti.textContent=id+" @ "+node;
   g.style.transform="translate("+x+"px,"+y+"px)";
 }

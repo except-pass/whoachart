@@ -45,3 +45,10 @@ test("escapes html-special characters in names", () => {
   const html = renderShell(c, layoutChart(c), STATE_URL)
   expect(html).toContain("a&lt;b&gt;&amp;c")
 })
+
+test("client runtime renders an agent face on blocked marbles", () => {
+  const html = renderShell(chart, layoutChart(chart), STATE_URL)
+  expect(html).toContain(".marble.agent")   // agent styling exists
+  expect(html).toContain("face")             // face glyph creation
+  expect(html).toContain("agentpulse")       // pulsing halo animation
+})
