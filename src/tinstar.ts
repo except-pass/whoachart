@@ -25,7 +25,22 @@ export interface ArtifactSink {
   deleteArtifact(artifactId: string): Promise<void>
 }
 
-export class TinstarClient implements ArtifactSink {
+export interface SpawnSessionOpts {
+  name: string
+  prompt: string
+  color?: string
+  project?: string
+  cliTemplate?: string
+  worktree?: boolean
+}
+
+// Minimal surface for spawning/stopping agent sessions — injectable for tests.
+export interface SessionLauncher {
+  spawnSession(opts: SpawnSessionOpts): Promise<{ name: string }>
+  stopSession(name: string): Promise<void>
+}
+
+export class TinstarClient implements ArtifactSink, SessionLauncher {
   constructor(private baseUrl = "http://localhost:5273") {}
 
   private async writeTemp(html: string): Promise<string> {
@@ -63,5 +78,28 @@ export class TinstarClient implements ArtifactSink {
 
   async deleteArtifact(artifactId: string): Promise<void> {
     await fetch(`${this.baseUrl}/api/artifacts/${artifactId}`, { method: "DELETE" }).catch(() => {})
+  }
+
+  async spawnSession(opts: SpawnSessionOpts): Promise<{ name: string }> {
+    // tmux reads "." as a pane separator — session names must be [a-z0-9-]
+    const name = opts.name.toLowerCase().replace(/[^a-z0-9-]/g, "-")
+    const res = await fetch(`${this.baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      // The kickoff prompt MUST be in the creation request — a separate
+      // prompt POST races CLI boot and is silently dropped.
+      body: JSON.stringify({ ...opts, name, backend: "tmux" }),
+    })
+    const body = (await res.json().catch(() => ({}))) as any
+    if (!res.ok || body?.ok === false) {
+      throw new Error(`spawnSession failed: ${res.status} ${JSON.stringify(body)}`)
+    }
+    return { name }
+  }
+
+  async stopSession(name: string): Promise<void> {
+    await fetch(`${this.baseUrl}/api/sessions/${encodeURIComponent(name)}/stop`, {
+      method: "POST",
+    }).catch(() => {})
   }
 }
