@@ -27,11 +27,8 @@ svg{width:100%;height:100%;display:block}
 .nname{fill:var(--ink);font:600 13px system-ui;text-anchor:middle}
 .nsub{fill:var(--dim);font:10px monospace;text-anchor:middle}
 .endcount{fill:var(--cyan);font:600 11px monospace}
-.marble{stroke-width:1.5}
-.marble.queued{fill:#3aa;stroke:#0a6b6b}
-.marble.running,.marble.blocked{fill:#a78bfa;stroke:#7c6cf0}
-.marble.done{fill:#3ad98a;stroke:#0a6b3b}
-.marble.failed{fill:#ef4444;stroke:#7f1d1d}
+.mlabel{font:700 7px monospace;fill:#06090d;pointer-events:none}
+.marble{cursor:default}
 `
 
 // The client runtime: polls the daemon state endpoint and reconciles marble
@@ -46,26 +43,36 @@ const nodeOf=new Map(); // marble id -> node id (for fly-into-counter on drop)
 const counts=new Map(); // node id -> text
 function cx(b){return b.x+b.w/2;}
 function slot(b,i,n){const shown=Math.min(n,8);return {x:cx(b)-(shown-1)*9+(i%8)*18, y:b.y+b.h+13};}
-function counterPos(b){return {x:cx(b), y:b.y-4};}
+function counterPos(b){return {x:cx(b)+80, y:b.y+b.h+17};}
+// Deterministic vivid color per marble id (FNV-1a hash → hue), stable for its
+// whole journey, so you can track an individual job across the graph.
+function hue(id){let h=2166136261;for(let i=0;i<id.length;i++){h^=id.charCodeAt(i);h=Math.imul(h,16777619);}return "hsl("+(((h>>>0)*137)%360)+" 72% 62%)";}
+// Status lives on the ring now (fill encodes identity): red=failed, bright=working.
+function ring(status){return status==="failed"?["#ef4444",2.5]:(status==="running"||status==="blocked")?["#eaf7ff",2]:["#0a0e14",1.25];}
 function upsert(id,status,x,y,node){
   nodeOf.set(id,node);
-  let el=els.get(id);
-  if(!el){
-    el=document.createElementNS(NS,"circle");
-    el.setAttribute("r","7");
-    el.style.transition="transform .6s cubic-bezier(.4,0,.2,1), opacity .45s";
-    el.style.opacity="0";
-    mg.appendChild(el); els.set(id,el);
-    requestAnimationFrame(()=>{el.style.opacity="1";});
+  let g=els.get(id);
+  if(!g){
+    g=document.createElementNS(NS,"g");
+    g.setAttribute("class","marble");
+    g.style.transition="transform .6s cubic-bezier(.4,0,.2,1), opacity .45s";
+    g.style.opacity="0";
+    const c=document.createElementNS(NS,"circle"); c.setAttribute("r","8"); c.setAttribute("fill",hue(id)); g.appendChild(c);
+    const t=document.createElementNS(NS,"text"); t.setAttribute("class","mlabel"); t.setAttribute("text-anchor","middle"); t.setAttribute("y","2.6"); t.textContent=id.slice(0,2); g.appendChild(t);
+    const ti=document.createElementNS(NS,"title"); ti.textContent=id+" @ "+node; g.appendChild(ti);
+    g._c=c; g._ti=ti;
+    mg.appendChild(g); els.set(id,g);
+    requestAnimationFrame(()=>{g.style.opacity="1";});
   }
-  el.setAttribute("class","marble "+status);
-  el.style.transform="translate("+x+"px,"+y+"px)";
+  const r=ring(status); g._c.setAttribute("stroke",r[0]); g._c.setAttribute("stroke-width",String(r[1]));
+  g._ti.textContent=id+" @ "+node;
+  g.style.transform="translate("+x+"px,"+y+"px)";
 }
 function setCount(node,total){
   const b=LAYOUT.boxes[node]; if(!b)return;
   const cp=counterPos(b);
   let t=counts.get(node);
-  if(!t){t=document.createElementNS(NS,"text");t.setAttribute("class","endcount");t.setAttribute("x",cp.x);t.setAttribute("y",cp.y);t.setAttribute("text-anchor","middle");t.style.transition="transform .25s ease";t.style.transformOrigin=cp.x+"px "+cp.y+"px";cg.appendChild(t);counts.set(node,t);}
+  if(!t){t=document.createElementNS(NS,"text");t.setAttribute("class","endcount");t.setAttribute("x",cp.x);t.setAttribute("y",cp.y);t.setAttribute("text-anchor","start");t.style.transition="transform .25s ease";t.style.transformOrigin=cp.x+"px "+cp.y+"px";cg.appendChild(t);counts.set(node,t);}
   const next="×"+total;
   if(t.textContent!==next){ t.textContent=next; t.style.transform="scale(1.6)"; setTimeout(()=>{t.style.transform="scale(1)";},170); }
 }
