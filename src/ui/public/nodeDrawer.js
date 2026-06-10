@@ -92,18 +92,18 @@ function pumpLogs(nodeId, api) {
   if (!c || c.dataset.node !== nodeId || c._busy) return
   c._busy = true
   const since = c._since ?? 0
+  // Capture `c` (the element this fetch started on) and operate on it by IDENTITY
+  // throughout. A node switch rebuilds #nodeLiveOutput into a NEW element with its
+  // own _busy/_since; a re-query in .then/.finally would clobber that new element
+  // (clearing its _busy mid-flight → double fetch, or appending stale lines).
   Promise.resolve(api.nodeLogs(nodeId, since))
     .then((res) => {
-      const cc = body().querySelector("#nodeLiveOutput")
-      if (!res || !cc || cc.dataset.node !== nodeId) return // switched away mid-flight
-      appendLogLines(cc, res.lines)
-      cc._since = res.nextSeq ?? since
+      if (!res || body().querySelector("#nodeLiveOutput") !== c) return // c detached by a switch
+      appendLogLines(c, res.lines)
+      c._since = res.nextSeq ?? since
     })
     .catch(() => {})
-    .finally(() => {
-      const cc = body().querySelector("#nodeLiveOutput")
-      if (cc) cc._busy = false
-    })
+    .finally(() => { c._busy = false }) // clear only the captured element, never the new one
 }
 
 // Pure: node def + live data -> meta HTML. Unit-testable without a DOM.

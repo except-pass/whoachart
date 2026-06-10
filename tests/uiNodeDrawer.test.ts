@@ -194,6 +194,37 @@ test("showNode resets the log cursor to 0 when switching nodes", async () => {
   expect(calls.at(-1)).toEqual({ id: "review", since: 0 }) // cursor reset, not carried over
 })
 
+test("a fetch in flight during a node switch can't clobber the new node's _busy or append to it", async () => {
+  const el = setupDom()
+  const resolvers: Record<string, (v: any) => void> = {}
+  const line = (node: string, seq: number, text: string) =>
+    ({ lines: [{ seq, ts: "2026-06-10T00:00:01.000Z", marble: "m", node, stream: "stdout", line: text }], nextSeq: seq })
+  const api = {
+    openMarble() {},
+    nodeLogs: (id: string) => new Promise<any>((r) => { resolvers[id] = r }),
+  }
+
+  showNode("build", DEF, { live: [], stats: {}, ends: {} }, api) // build fetch pending
+  showNode("review", DEF, { live: [], stats: {}, ends: {} }, api) // switch: review container, review fetch pending
+  const reviewC = el.querySelector("#nodeLiveOutput") as any
+  expect(reviewC._busy).toBe(true) // review fetch in flight
+
+  // The STALE build fetch resolves after the switch. It must touch neither the
+  // review container's _busy (overlap guard) nor its feed (no cross-append).
+  resolvers.build(line("build", 5, "BUILDLINE"))
+  await flush()
+  expect(reviewC._busy).toBe(true) // still in flight — NOT cleared by build's finally (the bug)
+  expect(el.querySelector(".logfeed")!.textContent).not.toContain("BUILDLINE")
+  expect(reviewC._since).toBeUndefined() // review cursor untouched by build's nextSeq
+
+  // Review's own fetch resolves normally and clears its _busy.
+  resolvers.review(line("review", 9, "REVIEWLINE"))
+  await flush()
+  expect(reviewC._busy).toBe(false)
+  expect(reviewC._since).toBe(9)
+  expect(el.querySelector(".logfeed")!.textContent).toContain("REVIEWLINE")
+})
+
 test("showNode wires marble rows to openMarble", () => {
   const el = setupDom()
   const opened: string[] = []

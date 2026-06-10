@@ -1,4 +1,4 @@
-import type { Chart, ChartEdge, ChartNode, Marble, NodeResult, RunCtx } from "./types"
+import type { ActivityStream, Chart, ChartEdge, ChartNode, Marble, NodeResult, RunCtx } from "./types"
 import { getNodeType, type NodeType } from "./registry"
 import { runShell } from "./context"
 import { MarbleStore } from "./store"
@@ -25,7 +25,7 @@ export interface EngineOpts {
   // Live per-(marble,node) output sink: shell stdout/stderr lines, streamed as
   // the activity runs. Lifecycle events stay on onEvent; the daemon merges both
   // into the inspector's log feed.
-  onLog?: (e: { marble: string; node: string; stream: "stdout" | "stderr"; line: string }) => void
+  onLog?: (e: { marble: string; node: string; stream: ActivityStream; line: string }) => void
   // Instance-scoped node-type overrides, resolved before the global registry.
   // The daemon passes its wired `agent` node here so per-daemon launcher/baseUrl
   // wiring never leaks through the module-global registry to another daemon.

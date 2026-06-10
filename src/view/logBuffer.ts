@@ -8,7 +8,10 @@
 // delta with `since(node, sinceSeq)` and advance a cursor. Because the ring is
 // bounded, since=0 returns at most one ring's worth — never a full replay.
 
-export type LogStream = "stdout" | "stderr" | "event"
+import type { ActivityStream } from "../types"
+
+// Activity streams plus the synthetic "event" stream for lifecycle lines.
+export type LogStream = ActivityStream | "event"
 
 export interface LogEntry {
   seq: number
@@ -25,6 +28,9 @@ export interface LogDelta {
 }
 
 export class LogBuffer {
+  // One ring per node, SHARED across all marbles currently on that node — a hot
+  // node (many concurrent marbles) evicts faster, so older lines age out sooner.
+  // Per-marble isolation is deferred; callers narrow with since(node, seq, marble).
   private perNode = new Map<string, LogEntry[]>()
   private seq = 0
 

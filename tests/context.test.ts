@@ -72,6 +72,12 @@ test("runShell tags stderr lines distinctly and flushes a final newline-less lin
   expect(out.stdout).toContain("no-newline-tail")
 })
 
+test("runShell strips the trailing CR from CRLF output", async () => {
+  const got: string[] = []
+  await runShell(`printf 'win\\r\\nlines\\r\\n'`, marble(), node, undefined, (_s, l) => got.push(l))
+  expect(got).toEqual(["win", "lines"]) // no stray \r left on either line
+})
+
 test("runShell kills the process when the signal aborts (no orphan side effects)", async () => {
   const marker = join(tmpdir(), `whoachart-kill-${crypto.randomUUID().slice(0, 8)}`)
   const ctrl = new AbortController()

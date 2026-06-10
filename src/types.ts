@@ -90,5 +90,9 @@ export interface RunCtx {
   signal?: AbortSignal
   // Live output sink: an activity calls this per line to stream its execution
   // into the node inspector. Engine tags each line with (marble, node).
-  log?: (stream: "stdout" | "stderr", line: string) => void
+  log?: (stream: ActivityStream, line: string) => void
 }
+
+// The output stream a node activity writes to (process stdout/stderr). The log
+// buffer adds a synthetic "event" stream on top for lifecycle lines.
+export type ActivityStream = "stdout" | "stderr"

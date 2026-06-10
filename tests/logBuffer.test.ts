@@ -65,3 +65,14 @@ test("marble filter narrows to one marble's lines", () => {
   const d = b.since("n", 0, "m1")
   expect(d.lines.map((l) => l.line)).toEqual(["from-m1", "more-m1"])
 })
+
+test("an empty marble-filtered delta leaves the cursor put (doesn't advance to others' lines)", () => {
+  const b = new LogBuffer()
+  add(b, "n", "from-m1", "m1") // seq 1
+  add(b, "n", "from-m2", "m2") // seq 2
+  // m1 has nothing past seq 1, even though seq 2 exists for m2 — cursor must NOT
+  // jump to 2 (that would skip m1 lines arriving later between the marbles).
+  const d = b.since("n", 1, "m1")
+  expect(d.lines).toEqual([])
+  expect(d.nextSeq).toBe(1)
+})

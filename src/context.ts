@@ -2,7 +2,7 @@
 import { writeFile, unlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { Marble, ChartNode } from "./types"
+import type { Marble, ChartNode, ActivityStream } from "./types"
 
 export interface ActivityOutput {
   exitCode: number
@@ -39,20 +39,18 @@ export function parseEmit(stdout: string): { next?: string; merge?: Record<strin
   return {}
 }
 
-// Stream type for live output chunks. "stdout"/"stderr" come from the activity
-// process; the engine adds "event" lines for lifecycle.
-export type LogStream = "stdout" | "stderr"
-
 // Read a piped stream to completion, invoking onLine for each COMPLETE line as
 // it arrives (line-buffered live streaming, not buffer-to-exit), and returning
-// the full accumulated text for parseEmit / the ActivityOutput.
+// the full accumulated text for parseEmit / the ActivityOutput. A trailing \r is
+// stripped so CRLF output doesn't leave a stray carriage return on each line.
 async function pumpStream(
   stream: ReadableStream<Uint8Array>,
-  which: LogStream,
-  onLine?: (stream: LogStream, line: string) => void,
+  which: ActivityStream,
+  onLine?: (stream: ActivityStream, line: string) => void,
 ): Promise<string> {
   const reader = stream.getReader()
   const dec = new TextDecoder()
+  const emit = (line: string) => onLine?.(which, line.endsWith("\r") ? line.slice(0, -1) : line)
   let pending = ""
   let full = ""
   for (;;) {
@@ -63,13 +61,13 @@ async function pumpStream(
     pending += text
     let nl: number
     while ((nl = pending.indexOf("\n")) >= 0) {
-      onLine?.(which, pending.slice(0, nl))
+      emit(pending.slice(0, nl))
       pending = pending.slice(nl + 1)
     }
   }
   const tail = dec.decode()
   if (tail) { full += tail; pending += tail }
-  if (pending.length) onLine?.(which, pending) // final line without a trailing newline
+  if (pending.length) emit(pending) // final line without a trailing newline
   return full
 }
 
@@ -87,7 +85,7 @@ export async function runShell(
   marble: Marble,
   node: ChartNode,
   signal?: AbortSignal,
-  onLine?: (stream: LogStream, line: string) => void,
+  onLine?: (stream: ActivityStream, line: string) => void,
 ): Promise<ActivityOutput> {
   const ctxPath = join(tmpdir(), `whoachart-ctx-${marble.id}-${node.id}.json`)
   await writeFile(ctxPath, JSON.stringify(marble.context))
