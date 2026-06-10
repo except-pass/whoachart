@@ -30,7 +30,7 @@ edges:
 
 beforeEach(() => clearRegistry())
 
-async function makeDaemon(launcher: FakeLauncher) {
+async function makeDaemon(launcher: FakeLauncher, baseUrl = "http://localhost:5330") {
   const dir = await mkdtemp(join(tmpdir(), "wc-da-"))
   const path = join(dir, "agency.yaml")
   await writeFile(path, CHART)
@@ -39,7 +39,7 @@ async function makeDaemon(launcher: FakeLauncher) {
     storeDir: join(dir, "store"),
     client: new FakeCanvas(),
     launcher,
-    baseUrl: "http://localhost:5330",
+    baseUrl,
   })
   await d.start()
   return d
@@ -69,4 +69,23 @@ test("signal resumes the marble and stops the session", async () => {
   expect(f?.node).toBe("ok")
   expect(f?.context.verdict).toBe("ship it")
   expect(launcher.stopped).toEqual([launcher.spawned[0].name])
+})
+
+test("two daemons in one process keep separate launcher + signal-URL wiring", async () => {
+  // The agent node used to be registered into the module-global registry,
+  // capturing the FIRST daemon's launcher/baseUrl; a second daemon silently
+  // reused it. Instance-scoped wiring must keep them independent.
+  const a = new FakeLauncher()
+  const b = new FakeLauncher()
+  const da = await makeDaemon(a, "http://daemon-a:1111")
+  const db = await makeDaemon(b, "http://daemon-b:2222")
+
+  const ma = await da.submit("agency", {})
+  const mb = await db.submit("agency", {})
+  await new Promise((r) => setTimeout(r, 250))
+
+  expect(a.spawned).toHaveLength(1)
+  expect(b.spawned).toHaveLength(1)
+  expect(a.spawned[0].prompt).toContain(`http://daemon-a:1111/api/charts/agency/marbles/${ma.id}/signal`)
+  expect(b.spawned[0].prompt).toContain(`http://daemon-b:2222/api/charts/agency/marbles/${mb.id}/signal`)
 })

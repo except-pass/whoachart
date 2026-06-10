@@ -24,6 +24,26 @@ export function buildBrief(
   ].filter(Boolean).join("\n")
 }
 
+export const agentConfigSchema = z.object({
+  brief: z.string(),
+  cli_template: z.string().optional(),
+  project: z.string().optional(),
+  keep_session: z.boolean().default(false),
+})
+
+// Schema-only registration for chart parsing/config validation. The wiring
+// (launcher + signal URL) is per-daemon, so the global registry must NOT
+// capture it — each Daemon supplies a wired run via the engine's instance-scoped
+// node-type overrides (see makeAgentNode). This run throws if a chart is run
+// without that wiring (e.g. the headless runner, which has no launcher).
+export const agentSchemaNode: NodeType = {
+  type: "agent",
+  configSchema: agentConfigSchema,
+  async run() {
+    throw new Error("agent node has no launcher wired (run it through a Daemon)")
+  },
+}
+
 // Factory: the launcher and signal-URL builder are injected so tests use a
 // fake and production uses TinstarClient.
 export function makeAgentNode(
@@ -32,12 +52,7 @@ export function makeAgentNode(
 ): NodeType {
   return {
     type: "agent",
-    configSchema: z.object({
-      brief: z.string(),
-      cli_template: z.string().optional(),
-      project: z.string().optional(),
-      keep_session: z.boolean().default(false),
-    }),
+    configSchema: agentConfigSchema,
     async run(ctx) {
       const cfg = ctx.node.config as { brief: string; cli_template?: string; project?: string }
       const edges = ctx.outgoing.map((e) => e.name ?? e.to)

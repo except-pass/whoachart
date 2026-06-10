@@ -1,5 +1,5 @@
 import type { Chart, ChartEdge, ChartNode, Marble, NodeResult } from "./types"
-import { getNodeType } from "./registry"
+import { getNodeType, type NodeType } from "./registry"
 import { runShell } from "./context"
 import { MarbleStore } from "./store"
 import { genId, now } from "./util"
@@ -22,6 +22,10 @@ export interface EngineOpts {
   maxSteps?: number
   onChange?: (m: Marble) => void
   onEvent?: (e: EngineEvent) => void
+  // Instance-scoped node-type overrides, resolved before the global registry.
+  // The daemon passes its wired `agent` node here so per-daemon launcher/baseUrl
+  // wiring never leaks through the module-global registry to another daemon.
+  nodeTypes?: Map<string, NodeType>
 }
 
 export function newMarble(
@@ -68,6 +72,10 @@ export class Engine {
     const n = this.opts.chart.nodes.find((n) => n.id === id)
     if (!n) throw new Error(`unknown node: ${id}`)
     return n
+  }
+
+  private nodeType(type: string): NodeType {
+    return this.opts.nodeTypes?.get(type) ?? getNodeType(type)
   }
 
   private outgoing(id: string): ChartEdge[] {
@@ -162,7 +170,7 @@ export class Engine {
   }
 
   private async execNode(node: ChartNode, m: Marble): Promise<NodeResult> {
-    const nt = getNodeType(node.type)
+    const nt = this.nodeType(node.type)
     const max = node.retry?.max ?? 0
     let lastErr: unknown
     for (let attempt = 0; attempt <= max; attempt++) {

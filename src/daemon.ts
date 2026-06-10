@@ -2,8 +2,8 @@ import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { parseChart } from "./schema"
 import { registerBuiltins } from "./nodeTypes"
-import { makeAgentNode } from "./nodeTypes/agent"
-import { hasNodeType, registerNodeType } from "./registry"
+import { agentSchemaNode, makeAgentNode } from "./nodeTypes/agent"
+import { hasNodeType, registerNodeType, type NodeType } from "./registry"
 import { MarbleStore } from "./store"
 import { Engine, newMarble, type EngineEvent } from "./engine"
 import { ViewState, type ViewSnapshot } from "./view/viewState"
@@ -109,13 +109,17 @@ export class Daemon {
     if (!hasNodeType("end")) registerBuiltins()
     const baseUrl = this.opts.baseUrl ?? "http://localhost:5330"
     this.launcher = this.opts.launcher ? loggingLauncher(this.opts.launcher) : undefined
-    if (!hasNodeType("agent")) {
-      const launcher: SessionLauncher = this.launcher ?? {
-        spawnSession: async () => { throw new Error("no session launcher configured (agent nodes need one)") },
-        stopSession: async () => {},
-      }
-      registerNodeType(makeAgentNode(launcher, (m) => `${baseUrl}/api/charts/${m.chart}/marbles/${m.id}/signal`))
+    // Global registration is schema-only (for chart parsing/config validation);
+    // the wired agent node is instance-scoped so this daemon's launcher/baseUrl
+    // never leak to another Daemon in the same process via the module-global map.
+    if (!hasNodeType("agent")) registerNodeType(agentSchemaNode)
+    const launcher: SessionLauncher = this.launcher ?? {
+      spawnSession: async () => { throw new Error("no session launcher configured (agent nodes need one)") },
+      stopSession: async () => {},
     }
+    const nodeTypes = new Map<string, NodeType>([
+      ["agent", makeAgentNode(launcher, (m) => `${baseUrl}/api/charts/${m.chart}/marbles/${m.id}/signal`)],
+    ])
     for (const path of this.opts.charts) {
       const chart = parseChart(await readFile(path, "utf8"))
       const store = new MarbleStore(join(this.opts.storeDir, chart.name))
@@ -125,6 +129,7 @@ export class Daemon {
         chart,
         store,
         concurrency: this.opts.concurrency,
+        nodeTypes,
         onChange: (m) => view.apply(m),
         onEvent: (e) => logLine(chart.name, fmtEvent(e)),
       })
