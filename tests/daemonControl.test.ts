@@ -128,6 +128,56 @@ test("def exposes node config, lifecycle hooks, and the agent brief", async () =
   expect((def.nodes.find((n) => n.id === "ship")!.config as any).outcome).toBe("success")
 })
 
+const SECRETCHART = `
+name: secrety
+nodes:
+  - id: ingest
+    type: source
+    config: { trigger: api }
+  - id: call
+    type: api
+    config:
+      request:
+        url: "https://api.example.com/x"
+        method: POST
+        headers:
+          Authorization: "Bearer sk-super-secret"
+          X-Trace: "ok-to-show"
+      next_on_ok: done
+  - id: done
+    type: end
+    config: { outcome: success }
+edges:
+  - { from: ingest, to: call }
+  - { from: call, to: done, name: next_on_ok }
+`
+
+test("def redacts secret-bearing config values but keeps the structure visible", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wc-dc-secret-"))
+  await writeFile(join(dir, "secrety.yaml"), SECRETCHART)
+  const d = new Daemon({
+    charts: [join(dir, "secrety.yaml")],
+    storeDir: join(dir, "store"),
+    client: new FakeCanvas(),
+    launcher: new FakeLauncher(),
+  })
+  await d.start()
+  const cfg = d.def("secrety").nodes.find((n) => n.id === "call")!.config as any
+
+  // every header value is masked (auth rides there), keys stay visible
+  expect(cfg.request.headers.Authorization).toBe("***redacted***")
+  expect(cfg.request.headers["X-Trace"]).toBe("***redacted***")
+  expect(Object.keys(cfg.request.headers)).toEqual(["Authorization", "X-Trace"])
+  // non-secret structure still shown — the inspector must reveal what the node does
+  expect(cfg.request.url).toBe("https://api.example.com/x")
+  expect(cfg.request.method).toBe("POST")
+  expect(cfg.next_on_ok).toBe("done")
+
+  // redaction is view-only: a second def() still masks (the real config wasn't mutated)
+  const cfg2 = d.def("secrety").nodes.find((n) => n.id === "call")!.config as any
+  expect(cfg2.request.headers.Authorization).toBe("***redacted***")
+})
+
 test("submit validates the source form", async () => {
   const { d } = await makeDaemon()
   await expect(d.submit("gatey", { context: {} })).rejects.toThrow(FormError)

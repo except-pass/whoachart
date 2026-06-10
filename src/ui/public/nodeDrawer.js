@@ -34,15 +34,22 @@ function kv(k, v) {
 }
 
 // === 1b SEAM ==============================================================
-// Live per-node / per-marble output streaming plugs in HERE. This container is
-// created ONCE per selected node and is intentionally NOT rebuilt by the meta
-// re-render that runs on every poll, so lines appended by a stream survive.
+// Live per-node / per-marble output streaming plugs in HERE, and ONLY here.
+// #nodeLiveOutput is the only durable anchor in the node view: it is created
+// once per selected node and is intentionally NOT rebuilt by the meta re-render
+// that runs on every poll, so lines appended by a stream survive.
+//
+// IMPORTANT: #nodeMeta and everything in it — including the [data-marble] rows
+// in the "marbles here" section — is destroyed and rebuilt on every poll. Do
+// NOT anchor any stream UI (per-node OR per-marble) to those rows; they vanish.
+// Any per-marble stream UI must live INSIDE #nodeLiveOutput (or be fully
+// re-derived from state each poll). The [data-marble] rows are fine as
+// transient click targets only.
 //
 // Task 1b should: open an EventSource/fetch stream keyed by
 // `container.dataset.node` (the node id), append lines into this container,
-// and reset when data-node changes (a node switch rebuilds it). Per-marble
-// streaming can hang off the `[data-marble]` rows in the "marbles here" section.
-// Keep this container stable — don't fold it back into renderNodeBody().
+// and reset when data-node changes (a node switch rebuilds it). Keep this
+// container stable — don't fold it back into renderNodeBody().
 // =========================================================================
 function liveSectionHtml(node) {
   return `<div class="section" id="nodeLiveOutput" data-node="${escHtml(node.id)}">

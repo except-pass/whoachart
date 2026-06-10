@@ -94,6 +94,24 @@ export interface ChartDef {
   layout: { boxes: Record<string, NodeBox>; width: number; height: number }
 }
 
+// Key names whose VALUES are masked before a node's config is shipped to the
+// (tailnet-reachable) inspector. Keys stay visible — the inspector's job is to
+// show what a node does — but credentials don't leave the daemon. Anything under
+// a `headers` block is masked wholesale, since auth usually rides there.
+const SECRET_KEY = /^(authorization|bearer|token|api[-_]?key|secret|password)$/i
+
+function redactSecrets(value: unknown, underHeaders = false): unknown {
+  if (Array.isArray(value)) return value.map((v) => redactSecrets(v, underHeaders))
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = underHeaders || SECRET_KEY.test(k) ? "***redacted***" : redactSecrets(v, k.toLowerCase() === "headers")
+    }
+    return out
+  }
+  return value
+}
+
 function findStart(chart: Chart): string {
   const source = chart.nodes.find((n) => n.type === "source")
   if (source) return source.id
@@ -197,7 +215,7 @@ export class Daemon {
         timeout: n.timeout,
         retry: n.retry,
         on_leave: n.on_leave,
-        config: n.config,
+        config: redactSecrets(n.config) as Record<string, unknown>,
         form: n.type === "source" ? ((n.config as Record<string, unknown>).form as FormField[] | undefined) : undefined,
       })),
       edges: rt.chart.edges.map((e) => ({ from: e.from, to: e.to, name: e.name, default: e.default, form: e.form })),

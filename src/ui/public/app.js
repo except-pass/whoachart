@@ -502,6 +502,7 @@ async function boot() {
     return
   }
   drawStatic()
+  clearNodeDrawer() // reset both selections to "nothing selected" (clearDrawer only handles the marble side)
   clearDrawer()
   setInterval(tickAges, 1000)
   pollLoop()
