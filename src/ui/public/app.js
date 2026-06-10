@@ -352,7 +352,7 @@ function renderBar(state) {
 
 // ---------- modal ----------
 
-function openModal(title, fields, onSubmit) {
+export function openModal(title, fields, onSubmit) {
   const modal = $("modal")
   modal.innerHTML = `<div class="box"><h3>${escHtml(title)}</h3>${renderForm(fields)}
     <div class="ferr" id="mErr"></div>
@@ -367,16 +367,22 @@ function openModal(title, fields, onSubmit) {
     try {
       const values = readForm(modal, fields)
       const err = await onSubmit(values)
+      // modal may have been dismissed mid-flight — #mErr is gone, nothing to paint
+      const mErr = modal.querySelector("#mErr")
+      if (!mErr) return
       // reset both error layers so a retry can't show stale field + message errors together
       showFieldErrors(modal, {})
-      modal.querySelector("#mErr").textContent = ""
+      mErr.textContent = ""
       if (err?.fields) showFieldErrors(modal, err.fields)
-      else if (err?.message) modal.querySelector("#mErr").textContent = err.message
+      else if (err?.message) mErr.textContent = err.message
       else closeModal()
-    } catch {
-      // fetch rejects outright on network failure — paint something rather than nothing
+    } catch (e) {
+      console.error("submit failed", e)
+      const mErr = modal.querySelector("#mErr")
+      if (!mErr) return
+      // paint something rather than nothing — covers network failure and unexpected bugs
       showFieldErrors(modal, {})
-      modal.querySelector("#mErr").textContent = "request failed — is the daemon up?"
+      mErr.textContent = "request failed — is the daemon up?"
     } finally {
       btn.disabled = false
     }
@@ -477,4 +483,4 @@ async function boot() {
   pollLoop()
 }
 
-void boot()
+if (globalThis.WHOACHART.autoboot !== false) void boot() // tests import this module and set autoboot:false

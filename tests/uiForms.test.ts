@@ -81,3 +81,26 @@ test("showFieldErrors paints and clears per-field messages", () => {
   expect(nameField.classList.contains("haserr")).toBe(false)
   expect(nameField.querySelector(".ferr")!.textContent).toBe("")
 })
+
+test("openModal paints the generic failure and clears fields when onSubmit rejects", async () => {
+  const window = new Window()
+  ;(globalThis as any).document = window.document
+  ;(globalThis as any).WHOACHART = { chart: "c", autoboot: false }
+  window.document.body.innerHTML = `<div id="toasts"></div><div id="modal" class="modal hidden"></div>`
+  const { openModal } = await import("../src/ui/public/app.js")
+
+  const errs: any[] = []
+  const origErr = console.error
+  console.error = (...a: any[]) => void errs.push(a)
+  try {
+    openModal("t", [{ key: "name", type: "text" }], () => Promise.reject(new Error("boom")))
+    ;(window.document.querySelector("#mGo") as any).click()
+    await new Promise((r) => setTimeout(r, 0))
+  } finally {
+    console.error = origErr
+  }
+
+  expect(window.document.querySelector("#mErr")!.textContent).toBe("request failed — is the daemon up?")
+  expect(window.document.querySelector('[data-key="name"]')!.classList.contains("haserr")).toBe(false)
+  expect(errs.length).toBe(1) // original error is logged, not swallowed
+})
