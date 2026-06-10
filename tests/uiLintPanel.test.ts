@@ -66,6 +66,25 @@ test("an edge finding routes click-through to a real source endpoint", () => {
   expect(clicks).toEqual(["a"])
 })
 
+test("escapes a malicious node id / message rather than injecting live markup", () => {
+  const { doc } = setupDom()
+  const evil = `"><img src=x onerror=alert(1)>`
+  mountLintPanel(def(
+    [{ level: "warn", code: "dead-end", node: evil, message: `node ${evil} dangles` }],
+    [{ id: evil }],
+  ))
+  const panel = doc.querySelector(".lintpanel")!
+  // PRIMARY: the injected <img> must never become a real element anywhere in
+  // the panel — neither from the message nor from the data-node attribute (the
+  // `"` escape keeps the attribute from breaking out of its quotes).
+  expect(panel.querySelectorAll("img").length).toBe(0)
+  // The payload survives as inert TEXT, proving it was escaped, not parsed as
+  // markup (textContent round-trips the entities back to the literal string).
+  expect(panel.querySelector(".lpmsg")!.textContent).toContain("<img src=x onerror=alert(1)>")
+  // And the click-through still targets the (escaped) node id intact.
+  expect((doc.querySelector(".lpitem.click") as any).getAttribute("data-node")).toBe(evil)
+})
+
 test("the × dismiss button hides the panel; header toggles collapse", () => {
   const { doc, click } = setupDom()
   mountLintPanel(def([{ level: "warn", code: "dead-end", node: "a", message: "x" }]))

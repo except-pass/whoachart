@@ -101,3 +101,37 @@ test("defensively flags duplicate node ids (parseChart hard-fails these first)",
   expect(w).toBeDefined()
   expect(w!.node).toBe("dup")
 })
+
+// --- pinning tests: behaviors verified by hand in review, locked in here ---
+
+test("a source-less chart treats no-incoming nodes as entry points (nothing unreachable)", () => {
+  // No `source` node at all. `head` has no incoming → it's the entry point, so
+  // the whole chain is reachable; only the missing terminal is a dead end.
+  const c = chart(
+    [node("head", "shell"), node("mid", "shell"), node("tail", "end")],
+    [{ from: "head", to: "mid" }, { from: "mid", to: "tail" }],
+  )
+  expect(codes(c)).not.toContain("unreachable-node")
+})
+
+test("an isolated island node is a dead end, NOT unreachable", () => {
+  // A lone node with no edges has no incoming → it's an entry point (reachable),
+  // but no outgoing and isn't an end → dead end. It must not be double-flagged.
+  const c = chart(
+    [node("in", "source"), node("out", "end"), node("island", "shell")],
+    [{ from: "in", to: "out" }],
+  )
+  const found = lintChart(c).warnings.filter((w) => w.node === "island").map((w) => w.code)
+  expect(found).toContain("dead-end")
+  expect(found).not.toContain("unreachable-node")
+})
+
+test("a decision with one outgoing edge raises no false dead-end/decision warning", () => {
+  const c = chart(
+    [node("in", "source"), node("d", "decision"), node("out", "end")],
+    [{ from: "in", to: "d" }, { from: "d", to: "out", name: "go" }],
+  )
+  const codeset = codes(c)
+  expect(codeset).not.toContain("decision-no-outgoing")
+  expect(codeset).not.toContain("dead-end")
+})

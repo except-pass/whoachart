@@ -92,6 +92,13 @@ export function lintChart(chart: Chart): LintResult {
     // decision is the sharpest case (its whole job is to route) so it gets a
     // pointed message; everything else (source/shell/api/agent/human) is the
     // same hazard with a softer one. `end` nodes are terminal by design — skip.
+    //
+    // ASSUMPTION: marbles only terminate via the `end` node type. True for all
+    // builtins (only endNode returns `end:true`). A future CUSTOM node type that
+    // self-terminates by returning `{end:true}` from its run() would be FLAGGED
+    // here spuriously — it legitimately has no outgoing edge. If such a type is
+    // added, exempt it (e.g. a `terminal` flag on the NodeType registration that
+    // this check consults) rather than letting the false-positive stand.
     if (outgoing === 0 && n.type !== "end") {
       if (n.type === "decision") {
         push({ level: "warn", code: "decision-no-outgoing", node: n.id, message: `decision node "${n.id}" has no outgoing edges — it cannot route a marble anywhere` })

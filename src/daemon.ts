@@ -280,7 +280,7 @@ export class Daemon {
       if (this.runtimes.has(chart.name) || (await this.chartStore!.exists(chart.name))) {
         throw new ChartError(`chart already exists: ${chart.name}`, 409)
       }
-      const lint = lintChart(chart) // 3b lint seam — no-op today
+      const lint = lintChart(chart) // advisory static analysis (3b); never blocks register
       await this.chartStore!.write(chart.name, yamlText)
       await this.installRuntime(chart, this.chartStore!.path(chart.name))
       logLine(chart.name, "registered")
