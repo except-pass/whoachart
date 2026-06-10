@@ -2,8 +2,23 @@ import { test, expect } from "bun:test"
 // helpers.js is plain ESM — bun imports it directly
 import {
   hue, ringFor, fmtAge, fmtMs, ageSeconds, slotPos, counterPos, enumWidget, escHtml, isDangerEdge,
-  oldestBlockedPerNode, shapeForType,
+  oldestBlockedPerNode, shapeForType, diamondHalfWidth, fitLabel,
 } from "../src/ui/public/helpers.js"
+
+test("diamondHalfWidth is full at the center and tapers to a point at the vertices", () => {
+  expect(diamondHalfWidth(150, 60, 0)).toBe(75) // centerline: full half-width
+  expect(diamondHalfWidth(150, 60, 30)).toBe(0) // top/bottom vertex: a point
+  expect(diamondHalfWidth(150, 60, 15)).toBe(37.5) // halfway down: half the room
+  expect(diamondHalfWidth(150, 60, 999)).toBe(0) // never negative past the vertex
+})
+
+test("fitLabel truncates with an ellipsis only when needed, and degrades safely", () => {
+  expect(fitLabel("decision", 100, 5.8)).toBe("decision") // fits → unchanged
+  const t = fitLabel("a-very-long-subtitle", 40, 5.8) // ~6 chars fit
+  expect(t.endsWith("…")).toBe(true)
+  expect(t.length).toBeLessThan("a-very-long-subtitle".length)
+  expect(fitLabel("anything", 0, 5.8)).toBe("") // no room → empty, not "…"
+})
 
 test("shapeForType maps terminals to stadium, decision to diamond, rest to rect", () => {
   expect(shapeForType("source")).toBe("stadium")

@@ -22,6 +22,28 @@ export function shapeForType(type) {
   return "rect"
 }
 
+// Half-width available inside a diamond at a vertical offset |dy| from its
+// center. A flowchart diamond (vertices at the box's side-midpoints) is full
+// width on the centerline and tapers linearly to a point at top/bottom, so a
+// label set below the center has far less room than the box implies. Used to
+// fit/truncate diamond labels so subtitles don't poke past the slanted edges.
+export function diamondHalfWidth(w, h, dy) {
+  const t = 1 - Math.min(1, Math.abs(dy) / (h / 2))
+  return (w / 2) * t
+}
+
+// Truncate `text` with a trailing ellipsis to fit `maxPx`, estimating glyph
+// advance as `pxPerChar`. Returns the text unchanged when it already fits.
+// Degenerate budgets collapse to "" (or a lone "…") rather than overflowing.
+export function fitLabel(text, maxPx, pxPerChar) {
+  const s = String(text)
+  if (maxPx <= 0 || pxPerChar <= 0) return ""
+  const max = Math.floor(maxPx / pxPerChar)
+  if (s.length <= max) return s
+  if (max <= 1) return max === 1 ? "…" : ""
+  return s.slice(0, max - 1) + "…"
+}
+
 // Status lives on the ring (fill encodes identity): red=failed, bright=working.
 export function ringFor(status) {
   if (status === "failed") return ["#ef4444", 2.5]
