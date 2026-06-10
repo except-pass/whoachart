@@ -1,5 +1,28 @@
 export type NodeKind = string
 
+export interface TrailHop {
+  node: string
+  enteredAt: string
+  leftAt?: string
+}
+
+export interface FormField {
+  key: string
+  type: "text" | "textarea" | "number" | "boolean" | "enum"
+  label?: string
+  required?: boolean
+  default?: unknown
+  options?: string[]
+  min?: number
+  max?: number
+  step?: number
+}
+
+export interface PresentSpec {
+  key: string
+  as: "markdown" | "json" | "text" | "link"
+}
+
 export interface ChartNode {
   id: string
   type: NodeKind
@@ -9,6 +32,8 @@ export interface ChartNode {
   retry?: { max: number }
   timeout?: number // milliseconds
   position?: { x: number; y: number }
+  stuck_after?: number // seconds before a dwelling marble is flagged stuck
+  present?: PresentSpec[]
   config: Record<string, unknown>
 }
 
@@ -18,6 +43,7 @@ export interface ChartEdge {
   name?: string
   on_traversal?: string
   default?: boolean
+  form?: FormField[]
 }
 
 export interface Chart {
@@ -35,6 +61,7 @@ export interface Marble {
   context: Record<string, unknown>
   workpiece?: string
   history: string[]
+  trail?: TrailHop[]
   status: MarbleStatus
   error?: string
   createdAt: string

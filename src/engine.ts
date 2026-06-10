@@ -13,6 +13,7 @@ export type EngineEvent =
   | { type: "traverse"; marble: string; from: string; to: string; edge?: string }
   | { type: "end"; marble: string; node: string; outcome: string }
   | { type: "failed"; marble: string; node: string; error: string }
+  | { type: "retried"; marble: string; node: string }
 
 export interface EngineOpts {
   chart: Chart
@@ -32,7 +33,8 @@ export function newMarble(
   const t = now()
   return {
     id: genId(), chart, node: startNode, context, workpiece,
-    history: [startNode], status: "queued", createdAt: t, updatedAt: t,
+    history: [startNode], trail: [{ node: startNode, enteredAt: t }],
+    status: "queued", createdAt: t, updatedAt: t,
   }
 }
 
@@ -94,6 +96,18 @@ export class Engine {
     this.pendingSignals.set(id, { next: sig.next, merge: sig.merge })
     this.emit({ type: "signaled", marble: m.id, node: m.node, next: sig.next })
     m.status = "queued"
+    await this.persist(m)
+    this.enqueue(m)
+  }
+
+  // Re-run a failed marble from the node it failed at.
+  async retry(id: string): Promise<void> {
+    const m = await this.opts.store.load(id)
+    if (!m) throw new Error(`unknown marble: ${id}`)
+    if (m.status !== "failed") throw new Error(`marble ${id} is not failed (status: ${m.status})`)
+    m.status = "queued"
+    m.error = undefined
+    this.emit({ type: "retried", marble: m.id, node: m.node })
     await this.persist(m)
     this.enqueue(m)
   }
@@ -231,8 +245,13 @@ export class Engine {
       if (node.on_leave) await this.runHook(node.on_leave, m, node)
       if (edge.on_traversal) await this.runHook(edge.on_traversal, m, node)
 
+      const leftAt = now()
+      const trail = (m.trail ??= [])
+      const lastHop = trail[trail.length - 1]
+      if (lastHop && lastHop.node === node.id && !lastHop.leftAt) lastHop.leftAt = leftAt
       m.node = edge.to
       m.history.push(edge.to)
+      trail.push({ node: edge.to, enteredAt: leftAt })
       this.emit({ type: "traverse", marble: m.id, from: node.id, to: edge.to, edge: edge.name })
 
       if (m.history.length > this.maxSteps) {

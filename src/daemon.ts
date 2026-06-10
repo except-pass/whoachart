@@ -24,6 +24,7 @@ function fmtEvent(e: EngineEvent): string {
     case "traverse": return `traverse marble=${e.marble} ${e.from}->${e.to}${e.edge ? ` edge=${e.edge}` : ""}`
     case "end": return `end marble=${e.marble} node=${e.node} outcome=${e.outcome}`
     case "failed": return `FAILED marble=${e.marble} node=${e.node} error=${e.error.split("\n")[0]}`
+    case "retried": return `retried marble=${e.marble} node=${e.node}`
   }
 }
 
