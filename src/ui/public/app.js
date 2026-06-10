@@ -373,7 +373,6 @@ export function openModal(title, fields, onSubmit) {
       // modal may have been dismissed or reopened mid-flight — don't paint onto a newer modal
       if (gen !== modalGen) return
       const mErr = modal.querySelector("#mErr")
-      if (!mErr) return
       // reset both error layers so a retry can't show stale field + message errors together
       showFieldErrors(modal, {})
       mErr.textContent = ""
@@ -384,7 +383,6 @@ export function openModal(title, fields, onSubmit) {
       console.error("submit failed", e)
       if (gen !== modalGen) return
       const mErr = modal.querySelector("#mErr")
-      if (!mErr) return
       // paint something rather than nothing — covers network failure and unexpected bugs
       showFieldErrors(modal, {})
       mErr.textContent = "request failed — is the daemon up?"
