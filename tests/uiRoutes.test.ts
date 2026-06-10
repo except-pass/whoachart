@@ -66,6 +66,17 @@ test("GET /ui/app.js serves javascript; traversal is blocked", async () => {
   expect((await fetch(`${base}/ui/..%2F..%2Fpackage.json`)).status).toBe(404)
 })
 
+test("all client modules serve and the shell has the control-surface containers", async () => {
+  for (const mod of ["app.js", "helpers.js", "forms.js", "drawer.js"]) {
+    const res = await fetch(`${base}/ui/${mod}`)
+    expect(res.status).toBe(200)
+  }
+  const html = await (await fetch(`${base}/ui/charts/gatey`)).text()
+  for (const id of ['id="svg"', 'id="drawer"', 'id="drawerBody"', 'id="tray"', 'id="modal"', 'id="hovercard"', 'id="overlay"']) {
+    expect(html).toContain(id)
+  }
+})
+
 test("GET def returns topology; state includes stats and deadLetter keys", async () => {
   const def = (await (await fetch(`${base}/api/charts/gatey/def`)).json()) as any
   expect(def.nodes.map((n: any) => n.id)).toContain("gate")
