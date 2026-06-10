@@ -77,3 +77,31 @@ export function enumWidget(options) {
 export function escHtml(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
 }
+
+// Build the inspector's step list from a marble: one entry per trail hop with
+// dwell, the context snapshot as the marble LEFT that node (live context for
+// the open hop), and which keys changed vs the previous step's snapshot.
+export function trailSteps(marble) {
+  const trail = marble.trail ?? []
+  return trail.map((h, i) => {
+    const live = !h.leftAt
+    const context = live ? (marble.context ?? {}) : (h.context ?? null)
+    const prev = i > 0 ? (trail[i - 1].context ?? null) : null
+    const changedKeys = []
+    if (context && prev) {
+      const keys = new Set([...Object.keys(prev), ...Object.keys(context)])
+      for (const k of keys) {
+        if (JSON.stringify(prev[k]) !== JSON.stringify(context[k])) changedKeys.push(k)
+      }
+    }
+    return {
+      node: h.node,
+      enteredAt: h.enteredAt,
+      leftAt: h.leftAt ?? null,
+      dwellMs: h.leftAt ? new Date(h.leftAt).getTime() - new Date(h.enteredAt).getTime() : null,
+      context,
+      changedKeys,
+      live,
+    }
+  })
+}

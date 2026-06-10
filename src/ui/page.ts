@@ -59,6 +59,11 @@ svg{width:100%;height:100%;display:block}
 .kv .k{color:var(--dim)}.kv .v{font:11px monospace;color:var(--ink);text-align:right;word-break:break-all}
 .crumb{font:10.5px monospace;color:var(--dim);line-height:1.9;margin:4px 0 10px}
 .crumb b{color:#9fb6c9}.crumb .now{color:var(--violet)}.crumb .t{color:#42525f}
+.crumb .step{cursor:pointer;border-radius:4px;padding:1px 2px}
+.crumb .step:hover{background:#13202c}
+.crumb .step.sel{background:#0f2630;outline:1px solid #1d4754}
+.crumb .step.sel b,.crumb .step.sel .now{color:var(--cyan)}
+.chg{color:var(--amber);font:10px monospace;margin:4px 0}
 .pill{display:inline-block;padding:1px 8px;border-radius:20px;font-size:10.5px;
   font-family:monospace;border:1px solid currentColor}
 pre.json{background:#06090d;border:1px solid #15202b;border-radius:7px;padding:8px;

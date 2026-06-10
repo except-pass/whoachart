@@ -93,3 +93,25 @@ test("retry on a non-failed marble throws", async () => {
   await expect(eng.retry(m.id)).rejects.toThrow(/not failed/)
   await expect(eng.retry("nope")).rejects.toThrow(/unknown marble/)
 })
+
+test("closed hops carry a context snapshot of the state as the marble left", async () => {
+  const chart: Chart = {
+    name: "snap",
+    nodes: [
+      { id: "s", type: "source", config: {} },
+      { id: "w", type: "shell", config: { on_enter: `echo '{"merge":{"made":true}}'` } },
+      { id: "z", type: "end", config: { outcome: "success" } },
+    ],
+    edges: [ { from: "s", to: "w" }, { from: "w", to: "z" } ],
+  }
+  const st = store(); await st.init()
+  const eng = new Engine({ chart, store: st })
+  const m = newMarble("snap", "s", { seed: 1 })
+  await eng.submit(m); await eng.drain()
+  const f = (await st.load(m.id))!
+  const [hopS, hopW, hopZ] = f.trail!
+  expect(hopS.context).toEqual({ seed: 1 })            // state leaving the source
+  expect(hopW.context).toEqual({ seed: 1, made: true }) // includes w's merge
+  expect(hopZ.context).toBeUndefined()                  // still AT the end node (open hop)
+  expect(f.context.made).toBe(true)
+})

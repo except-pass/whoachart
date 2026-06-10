@@ -1,12 +1,13 @@
 // Marble inspector drawer: journey + dwell timings, gate presentation,
 // decision buttons (with edge forms), session focus, retry.
-import { escHtml, fmtMs, hue, isDangerEdge } from "./helpers.js"
+import { escHtml, fmtMs, hue, isDangerEdge, trailSteps } from "./helpers.js"
 import { renderForm, readForm, showFieldErrors } from "./forms.js"
 
 const body = () => document.getElementById("drawerBody")
 
 let current = null // marble id the drawer is showing
 let lastRender = "" // change-detection key so polling doesn't flicker the DOM
+let stepSel = null // selected trail step for state time-travel (null = latest)
 let fetchSeq = 0 // discard out-of-order marble fetches from overlapping polls
 
 export function selectedMarble() {
@@ -16,24 +17,39 @@ export function selectedMarble() {
 export function clearDrawer() {
   current = null
   lastRender = ""
+  stepSel = null
   body().innerHTML = `<span style="color:var(--dim)">click a marble…</span>`
 }
 
-function trailHtml(m) {
-  const trail = m.trail ?? []
-  return `<div class="crumb">${trail
-    .map((h, i) => {
-      const last = i === trail.length - 1
-      const dwell = h.leftAt
-        ? `<span class="t"> ${fmtMs(new Date(h.leftAt) - new Date(h.enteredAt))}</span>`
-        : last
-          ? ` <span class="t">● now</span>`
+function trailHtml(steps, sel) {
+  return `<div class="crumb">${steps
+    .map((s, i) => {
+      const dwell = s.dwellMs != null
+        ? `<span class="t"> ${fmtMs(s.dwellMs)}</span>`
+        : s.live
+          ? ` <span class="t">\u25cf now</span>`
           : ""
-      return last && !h.leftAt
-        ? `<span class="now">${escHtml(h.node)}</span>${dwell}`
-        : `<b>${escHtml(h.node)}</b>${dwell}`
+      const label = s.live
+        ? `<span class="now">${escHtml(s.node)}</span>`
+        : `<b>${escHtml(s.node)}</b>`
+      return `<span class="step${i === sel ? " sel" : ""}" data-i="${i}" title="state after ${escHtml(s.node)}">${label}${dwell}</span>`
     })
-    .join(" › ")}</div>`
+    .join(" \u203a ")}</div>`
+}
+
+// State time-travel: the context snapshot at the selected step, with the keys
+// that changed at that step called out.
+function statePanel(m, steps, sel) {
+  const s = steps[sel]
+  if (!s) return `<pre class="json">${escHtml(JSON.stringify(m.context, null, 2))}</pre>`
+  const title = s.live ? `current state \u00b7 ${escHtml(s.node)}` : `state after ${escHtml(s.node)}`
+  const changed = s.changedKeys.length
+    ? `<div class="chg">changed here: ${s.changedKeys.map(escHtml).join(", ")}</div>`
+    : ""
+  const body = s.context
+    ? `<pre class="json">${escHtml(JSON.stringify(s.context, null, 2))}</pre>`
+    : `<div class="chg" style="color:var(--dim)">no snapshot for this step (recorded before time-travel existed)</div>`
+  return `<div class="present" style="margin-top:10px"><span class="pk">${title}</span>${changed}${body}</div>`
 }
 
 function presentHtml(m, gate) {
@@ -77,6 +93,7 @@ function decisionHtml(gate) {
 
 // Render (or re-render) the drawer for a marble. api = {marble, signal, retry, focusSession, toast}
 export async function showMarble(id, gateInfo, api) {
+  if (current !== id) stepSel = null // new marble: back to latest state
   current = id
   const seq = ++fetchSeq
   const m = await api.marble(id)
@@ -86,11 +103,13 @@ export async function showMarble(id, gateInfo, api) {
   // Don't clobber the DOM while the user is typing in a drawer form, and
   // skip identical re-renders (the poll loop calls this every 600ms).
   if (el.contains(document.activeElement) && document.activeElement !== document.body) return
-  const renderKey = id + JSON.stringify(m) + JSON.stringify(gateInfo)
+  const renderKey = id + JSON.stringify(m) + JSON.stringify(gateInfo) + "|" + stepSel
   if (renderKey === lastRender) return
   lastRender = renderKey
   const status = m.status
   const failed = status === "failed" && m.error
+  const steps = trailSteps(m)
+  const sel = stepSel ?? Math.max(0, steps.length - 1)
 
   el.innerHTML = `
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
@@ -98,18 +117,27 @@ export async function showMarble(id, gateInfo, api) {
       <b style="font-family:monospace">${escHtml(m.id)}</b>
       <span class="pill" style="color:${failed ? "var(--red)" : status === "blocked" ? "var(--violet)" : "var(--cyan)"}">${escHtml(status)}</span>
     </div>
-    ${trailHtml(m)}
+    ${trailHtml(steps, sel)}
     ${m.workpiece ? `<div class="kv"><span class="k">workpiece</span><span class="v">${escHtml(m.workpiece)}</span></div>` : ""}
     ${typeof m.context._session === "string" ? `<div class="kv"><span class="k">session</span><span class="v">${escHtml(m.context._session)}</span></div><button class="act violet" id="dFocus">⌖ open session on canvas</button>` : ""}
     ${failed ? `<pre class="json" style="color:#ffb4b4">${escHtml(m.error.split("\n")[0])}</pre><button class="act danger" id="dRetry">↻ retry</button>` : ""}
     ${gateInfo ? presentHtml(m, gateInfo) : ""}
     ${gateInfo ? decisionHtml(gateInfo) : ""}
     <div id="dForm"></div>
-    <pre class="json">${escHtml(JSON.stringify(m.context, null, 2))}</pre>
+    ${statePanel(m, steps, sel)}
   `
 
   el.querySelector("#dFocus")?.addEventListener("click", () => api.focusSession(id))
   el.querySelector("#dRetry")?.addEventListener("click", () => api.retry(id))
+
+  for (const stepEl of el.querySelectorAll(".crumb .step")) {
+    stepEl.addEventListener("click", () => {
+      const i = Number(stepEl.dataset.i)
+      stepSel = i === steps.length - 1 ? null : i // clicking latest re-follows live state
+      lastRender = ""
+      void showMarble(id, gateInfo, api)
+    })
+  }
 
   for (const btn of el.querySelectorAll("button.act[data-edge]")) {
     btn.addEventListener("click", () => {

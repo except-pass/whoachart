@@ -4,6 +4,9 @@ export interface TrailHop {
   node: string
   enteredAt: string
   leftAt?: string
+  // Context snapshot taken as the marble LEFT this node (after its merges) —
+  // powers per-step state time-travel in the inspector.
+  context?: Record<string, unknown>
 }
 
 export interface FormField {

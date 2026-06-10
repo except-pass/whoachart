@@ -10,3 +10,13 @@ export function isDangerEdge(name: string): boolean
 export function oldestBlockedPerNode(live: any[]): Map<string, any>
 export function enumWidget(options: string[]): "radio" | "select"
 export function escHtml(s: unknown): string
+export interface TrailStep {
+  node: string
+  enteredAt: string
+  leftAt: string | null
+  dwellMs: number | null
+  context: Record<string, unknown> | null
+  changedKeys: string[]
+  live: boolean
+}
+export function trailSteps(marble: { trail?: any[]; context?: Record<string, unknown> }): TrailStep[]

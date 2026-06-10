@@ -248,7 +248,11 @@ export class Engine {
       const leftAt = now()
       const trail = (m.trail ??= [])
       const lastHop = trail[trail.length - 1]
-      if (lastHop && lastHop.node === node.id && !lastHop.leftAt) lastHop.leftAt = leftAt
+      if (lastHop && lastHop.node === node.id && !lastHop.leftAt) {
+        lastHop.leftAt = leftAt
+        // snapshot the state as it leaves this node — inspector time-travel
+        lastHop.context = structuredClone(m.context)
+      }
       m.node = edge.to
       m.history.push(edge.to)
       trail.push({ node: edge.to, enteredAt: leftAt })

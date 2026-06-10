@@ -81,3 +81,44 @@ test("enumWidget picks radio for short lists, select for long", () => {
 test("escHtml escapes the dangerous four", () => {
   expect(escHtml(`<a href="x">&`)).toBe("&lt;a href=&quot;x&quot;&gt;&amp;")
 })
+
+import { trailSteps } from "../src/ui/public/helpers.js"
+
+test("trailSteps: snapshots, dwell, changed keys, live tail", () => {
+  const marble = {
+    context: { a: 1, b: "edited", review: "note" },
+    trail: [
+      { node: "ingest", enteredAt: "2026-06-10T00:00:00.000Z", leftAt: "2026-06-10T00:00:01.000Z", context: { a: 1 } },
+      { node: "work", enteredAt: "2026-06-10T00:00:01.000Z", leftAt: "2026-06-10T00:00:03.000Z", context: { a: 1, b: "made" } },
+      { node: "gate", enteredAt: "2026-06-10T00:00:03.000Z" }, // open hop → live context
+    ],
+  }
+  const steps = trailSteps(marble)
+  expect(steps).toHaveLength(3)
+  expect(steps[0].changedKeys).toEqual([]) // no previous snapshot
+  expect(steps[0].dwellMs).toBe(1000)
+  expect(steps[1].changedKeys).toEqual(["b"]) // b added at work
+  expect(steps[1].context).toEqual({ a: 1, b: "made" })
+  expect(steps[2].live).toBe(true)
+  expect(steps[2].context).toEqual(marble.context) // open hop shows current state
+  expect(steps[2].changedKeys.sort()).toEqual(["b", "review"]) // b edited + review added
+  expect(steps[2].dwellMs).toBeNull()
+})
+
+test("trailSteps: legacy hops without snapshots degrade gracefully", () => {
+  const steps = trailSteps({
+    context: { x: 1 },
+    trail: [
+      { node: "a", enteredAt: "t", leftAt: "t2" }, // closed, no snapshot (pre-feature record)
+      { node: "b", enteredAt: "t2" },
+    ],
+  })
+  expect(steps[0].context).toBeNull()
+  expect(steps[0].changedKeys).toEqual([])
+  expect(steps[1].context).toEqual({ x: 1 })
+  expect(steps[1].changedKeys).toEqual([]) // no baseline to diff against
+})
+
+test("trailSteps: no trail at all", () => {
+  expect(trailSteps({ context: { x: 1 } })).toEqual([])
+})
