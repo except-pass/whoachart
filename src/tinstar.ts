@@ -40,7 +40,20 @@ export interface SessionLauncher {
   stopSession(name: string): Promise<void>
 }
 
-export class TinstarClient implements ArtifactSink, SessionLauncher {
+export interface EnsureWidgetOpts {
+  url: string
+  title?: string
+  color?: string
+}
+
+// Canvas-side controls the daemon uses: keep one widget per chart pointing at
+// the daemon's UI, and pan the user's canvas to a session on request.
+export interface CanvasControl {
+  ensureBrowserWidget(opts: EnsureWidgetOpts): Promise<{ widgetId: string }>
+  panToSession(sessionName: string): Promise<boolean>
+}
+
+export class TinstarClient implements ArtifactSink, SessionLauncher, CanvasControl {
   constructor(private baseUrl = "http://localhost:5273") {}
 
   private async writeTemp(html: string): Promise<string> {
@@ -101,5 +114,32 @@ export class TinstarClient implements ArtifactSink, SessionLauncher {
     await fetch(`${this.baseUrl}/api/sessions/${encodeURIComponent(name)}/stop`, {
       method: "POST",
     }).catch(() => {})
+  }
+
+  async ensureBrowserWidget(opts: EnsureWidgetOpts): Promise<{ widgetId: string }> {
+    const stateRes = await fetch(`${this.baseUrl}/api/state`)
+    const state = (await stateRes.json().catch(() => ({}))) as any
+    const existing = (state?.browserWidgets ?? []).find((w: any) => w?.url === opts.url)
+    if (existing) return { widgetId: existing.id }
+
+    const res = await fetch(`${this.baseUrl}/api/browser-widgets`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(opts),
+    })
+    const body = (await res.json().catch(() => ({}))) as any
+    if (!res.ok || body?.ok === false) {
+      throw new Error(`ensureBrowserWidget failed: ${res.status} ${JSON.stringify(body)}`)
+    }
+    return { widgetId: body.data.id }
+  }
+
+  async panToSession(sessionName: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/canvas/viewport`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "focus", sessionName }),
+    }).catch(() => null)
+    return !!res && res.ok
   }
 }
