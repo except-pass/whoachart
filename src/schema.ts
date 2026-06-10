@@ -3,6 +3,7 @@ import { z } from "zod"
 import { parse as parseYaml } from "yaml"
 import type { Chart } from "./types"
 import { getNodeType } from "./registry"
+import { formFieldSchema } from "./forms"
 
 const edgeSchema = z.object({
   from: z.string(),
@@ -10,6 +11,7 @@ const edgeSchema = z.object({
   name: z.string().optional(),
   on_traversal: z.string().optional(),
   default: z.boolean().optional(),
+  form: z.array(formFieldSchema).optional(),
 })
 
 const nodeSchema = z.object({
@@ -21,6 +23,10 @@ const nodeSchema = z.object({
   retry: z.object({ max: z.number().int().nonnegative() }).optional(),
   timeout: z.number().int().positive().optional(),
   position: z.object({ x: z.number(), y: z.number() }).optional(),
+  stuck_after: z.number().int().positive().optional(),
+  present: z
+    .array(z.object({ key: z.string(), as: z.enum(["markdown", "json", "text", "link"]).default("text") }))
+    .optional(),
   config: z.record(z.unknown()).default({}),
 })
 

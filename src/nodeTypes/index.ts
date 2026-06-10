@@ -4,6 +4,7 @@ import { sourceNode } from "./source"
 import { shellNode } from "./shell"
 import { decisionNode } from "./decision"
 import { apiNode } from "./api"
+import { humanNode } from "./human"
 
 export function registerBuiltins(): void {
   registerNodeType(sourceNode)
@@ -11,4 +12,5 @@ export function registerBuiltins(): void {
   registerNodeType(decisionNode)
   registerNodeType(apiNode)
   registerNodeType(endNode)
+  registerNodeType(humanNode)
 }

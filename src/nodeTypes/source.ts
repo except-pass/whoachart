@@ -1,5 +1,6 @@
 import { z } from "zod"
 import type { NodeType } from "../registry"
+import { formFieldSchema } from "../forms"
 
 // A source defines how marbles enter (the control API reads `trigger`).
 // Inside the engine loop it is a pass-through: auto-advance to its successor.
@@ -8,6 +9,7 @@ export const sourceNode: NodeType = {
   configSchema: z.object({
     trigger: z.enum(["api", "manual"]).default("api"),
     template: z.record(z.unknown()).optional(),
+    form: z.array(formFieldSchema).optional(),
   }),
   async run() {
     return {}
