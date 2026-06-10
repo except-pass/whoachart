@@ -5,6 +5,7 @@ import { hue, ringFor, fmtAge, fmtMs, ageSeconds, slotPos, counterPos, escHtml, 
 import { renderForm, readForm, showFieldErrors } from "./forms.js"
 import { showMarble, selectedMarble, clearDrawer, deselectMarble } from "./drawer.js"
 import { showNode, selectedNode, clearNodeDrawer } from "./nodeDrawer.js"
+import { mountLintPanel } from "./lintPanel.js"
 
 const NS = "http://www.w3.org/2000/svg"
 const CHART = globalThis.WHOACHART.chart
@@ -532,6 +533,7 @@ async function boot() {
     return
   }
   drawStatic()
+  mountLintPanel(DEF, { onNodeClick: openNodeDrawer }) // advisory static-analysis panel; click-through opens the node inspector
   clearNodeDrawer() // reset both selections to "nothing selected" (clearDrawer only handles the marble side)
   clearDrawer()
   setInterval(tickAges, 1000)
