@@ -2,13 +2,30 @@ import { test, expect } from "bun:test"
 // helpers.js is plain ESM — bun imports it directly
 import {
   hue, ringFor, fmtAge, fmtMs, ageSeconds, slotPos, counterPos, enumWidget, escHtml, isDangerEdge,
+  oldestBlockedPerNode,
 } from "../src/ui/public/helpers.js"
+
+test("oldestBlockedPerNode picks the FIFO marble per node, skipping agents and non-blocked", () => {
+  const gate = { edges: [{ name: "ok" }] }
+  const live = [
+    { id: "m1", node: "a", status: "blocked", gate, enteredAt: "2026-06-10T00:02:00Z" },
+    { id: "m2", node: "a", status: "blocked", gate, enteredAt: "2026-06-10T00:01:00Z" },
+    { id: "m3", node: "a", status: "running", gate, enteredAt: "2026-06-10T00:00:00Z" },
+    { id: "m4", node: "b", status: "blocked", gate: { ...gate, agent: "bot" }, enteredAt: "2026-06-10T00:00:00Z" },
+    { id: "m5", node: "c", status: "blocked", enteredAt: "2026-06-10T00:00:00Z" },
+  ]
+  const byNode = oldestBlockedPerNode(live)
+  expect([...byNode.keys()]).toEqual(["a"])
+  expect(byNode.get("a").id).toBe("m2")
+})
 
 test("isDangerEdge matches whole words only", () => {
   expect(isDangerEdge("reject")).toBe(true)
   expect(isDangerEdge("decline politely")).toBe(true)
   expect(isDangerEdge("no")).toBe(true)
   expect(isDangerEdge("mark failed")).toBe(true)
+  expect(isDangerEdge("Reject")).toBe(true)
+  expect(isDangerEdge("FAIL")).toBe(true)
   expect(isDangerEdge("acknowledge")).toBe(false)
   expect(isDangerEdge("snooze")).toBe(false)
   expect(isDangerEdge("normal")).toBe(false)

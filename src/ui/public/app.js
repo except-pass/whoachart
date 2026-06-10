@@ -1,7 +1,7 @@
 // whoachart control surface client. Draws the chart from /def, polls /state,
 // and renders marbles that travel along the edge curves. The page never
 // reloads — all updates are DOM reconciliation + rAF animation.
-import { hue, ringFor, fmtAge, fmtMs, ageSeconds, slotPos, counterPos, escHtml, isDangerEdge } from "./helpers.js"
+import { hue, ringFor, fmtAge, fmtMs, ageSeconds, slotPos, counterPos, escHtml, isDangerEdge, oldestBlockedPerNode } from "./helpers.js"
 import { renderForm, readForm, showFieldErrors } from "./forms.js"
 import { showMarble, selectedMarble, clearDrawer } from "./drawer.js"
 
@@ -35,6 +35,8 @@ function toast(msg) {
   const t = document.createElement("div")
   t.className = "toast"
   t.textContent = msg
+  // stack below any toasts already showing so rapid errors stay readable
+  t.style.top = `${10 + $("canvas").querySelectorAll(".toast").length * 34}px`
   $("canvas").appendChild(t)
   setTimeout(() => {
     t.style.opacity = "0"
@@ -183,6 +185,10 @@ function travelAlong(g, id, from, to, dest) {
   const prevTransition = g.style.transition
   g.style.transition = "opacity .45s" // rAF owns transform during travel
   const stepFrame = (now) => {
+    if (els.get(id) !== g) { // dropped mid-travel — stop overwriting the exit transform
+      setTimeout(() => path.classList.remove("pulse"), 350)
+      return
+    }
     const t = Math.min(1, (now - start) / D)
     const ease = t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2
     const p = path.getPointAtLength(ease * total)
@@ -190,7 +196,7 @@ function travelAlong(g, id, from, to, dest) {
     if (t < 1) requestAnimationFrame(stepFrame)
     else {
       g.style.transition = prevTransition
-      if (els.get(id) === g) setTransform(g, dest.x, dest.y) // marble may have been dropped mid-travel
+      setTransform(g, dest.x, dest.y)
       traveling.delete(id)
       setTimeout(() => path.classList.remove("pulse"), 350)
     }
@@ -257,16 +263,7 @@ function setCount(node, total) {
 
 function drawGateButtons(live) {
   gOverlay.replaceChildren()
-  // One button set per gate node, acting on the OLDEST blocked marble there
-  // (FIFO) — per-marble sets would stack unreadably. The label names the
-  // marble so the target is unambiguous; other marbles decide via the drawer.
-  const byNode = new Map()
-  for (const m of live) {
-    if (m.status !== "blocked" || !m.gate || m.gate.agent) continue // agents: force via drawer only
-    const cur = byNode.get(m.node)
-    if (!cur || m.enteredAt < cur.enteredAt) byNode.set(m.node, m)
-  }
-  for (const m of byNode.values()) {
+  for (const m of oldestBlockedPerNode(live).values()) {
     const b = BOX[m.node]
     if (!b) continue
     m.gate.edges.forEach((edge, i) => {
@@ -276,6 +273,7 @@ function drawGateButtons(live) {
       const t = el("text", { x: b.x + b.w + 56, y: y + 14 }, g)
       const name = edge.name.length > 9 ? edge.name.slice(0, 8) + "…" : edge.name
       t.textContent = `${name} · ${m.id.slice(0, 2)}`
+      el("title", {}, g).textContent = `${edge.name} → ${m.id}` // full name + id (label truncates both)
       g.addEventListener("click", () => {
         if (edge.form && edge.form.length > 0) openEdgeModal(m.id, edge)
         else void API.signal(m.id, { next: edge.name }).then((r) => { if (r?.message) toast(r.message) })
@@ -364,6 +362,9 @@ function openModal(title, fields, onSubmit) {
   modal.querySelector("#mGo").addEventListener("click", async () => {
     const values = readForm(modal, fields)
     const err = await onSubmit(values)
+    // reset both error layers so a retry can't show stale field + message errors together
+    showFieldErrors(modal, {})
+    modal.querySelector("#mErr").textContent = ""
     if (err?.fields) showFieldErrors(modal, err.fields)
     else if (err?.message) modal.querySelector("#mErr").textContent = err.message
     else closeModal()
@@ -446,7 +447,7 @@ async function tick() {
 // Chained (not setInterval) so slow /state responses can't overlap and land
 // out of order, regressing lastState to an older snapshot.
 function pollLoop() {
-  tick().catch(() => {}).finally(() => setTimeout(pollLoop, 600))
+  tick().catch((e) => console.error("tick failed", e)).finally(() => setTimeout(pollLoop, 600))
 }
 
 async function boot() {

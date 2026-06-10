@@ -53,7 +53,20 @@ export function counterPos(box) {
 // the verbs (covers "rejected", "failed"); "no" must be a whole word so names
 // like "acknowledge", "snooze", or "normal" don't read as destructive.
 export function isDangerEdge(name) {
-  return /\b(reject|decline|fail)|\bno\b/.test(name)
+  return /\b(reject|decline|fail)|\bno\b/i.test(name)
+}
+
+// One gate-button set per node, acting on the OLDEST blocked marble there
+// (FIFO) — per-marble sets would stack unreadably. Agent gates are excluded
+// (forcing an agent decision goes via the drawer).
+export function oldestBlockedPerNode(live) {
+  const byNode = new Map()
+  for (const m of live) {
+    if (m.status !== "blocked" || !m.gate || m.gate.agent) continue
+    const cur = byNode.get(m.node)
+    if (!cur || m.enteredAt < cur.enteredAt) byNode.set(m.node, m)
+  }
+  return byNode
 }
 
 // Enum fields render as radios when short, a dropdown when long.

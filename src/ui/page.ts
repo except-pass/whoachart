@@ -101,7 +101,7 @@ details.force{margin-top:8px;font-size:11px;color:var(--dim)}
   padding:6px 8px;font:12px monospace}
 .field textarea{min-height:64px}
 .field .radio-row{display:flex;gap:12px;font-size:12px}
-.field .ferr{color:var(--red);font-size:10.5px;margin-top:3px}
+.ferr{color:var(--red);font-size:10.5px;margin-top:3px}
 .field.haserr input,.field.haserr textarea,.field.haserr select{border-color:var(--red)}
 </style></head>
 <body>
