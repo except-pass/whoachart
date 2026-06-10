@@ -93,6 +93,15 @@ export class Engine {
     const m = await this.opts.store.load(id)
     if (!m) throw new Error(`unknown marble: ${id}`)
     if (m.status !== "blocked") throw new Error(`marble ${id} is not blocked (status: ${m.status})`)
+    // Reject a signal that wouldn't route BEFORE unblocking. Otherwise the marble
+    // advances, fails resolveEdge in step(), and is permanently failed (its agent
+    // session torn down) by a single typo'd `next`. Leaving it blocked lets the
+    // caller retry with a corrected edge.
+    const node = this.node(m.node)
+    if (!this.resolveEdge(node, { next: sig.next, merge: sig.merge })) {
+      const opts = this.outgoing(node.id).map((e) => e.name ?? e.to).join(", ") || "(none)"
+      throw new Error(`signal next=${sig.next ?? "-"} matches no outgoing edge of ${node.id} (options: ${opts})`)
+    }
     this.pendingSignals.set(id, { next: sig.next, merge: sig.merge })
     this.emit({ type: "signaled", marble: m.id, node: m.node, next: sig.next })
     m.status = "queued"

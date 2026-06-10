@@ -49,6 +49,28 @@ test("marble blocks, then signal(next) resumes it along the named edge", async (
   expect(f?.context.verdict).toBe("looks good")
 })
 
+test("signal with a next that matches no outgoing edge throws and leaves the marble blocked", async () => {
+  const st = store(); await st.init()
+  const eng = new Engine({ chart, store: st })
+  const m = newMarble("sig", "wait")
+  await eng.submit(m); await eng.drain()
+
+  await expect(eng.signal(m.id, { next: "typo" })).rejects.toThrow(/no outgoing edge|matches no/i)
+  // the marble stays blocked so the caller can retry with a corrected edge —
+  // a typo must not permanently fail the work item.
+  expect((await st.load(m.id))?.status).toBe("blocked")
+})
+
+test("signal without next on a multi-edge node throws (cannot route)", async () => {
+  const st = store(); await st.init()
+  const eng = new Engine({ chart, store: st })
+  const m = newMarble("sig", "wait")
+  await eng.submit(m); await eng.drain()
+
+  await expect(eng.signal(m.id, {})).rejects.toThrow(/no outgoing edge|matches no/i)
+  expect((await st.load(m.id))?.status).toBe("blocked")
+})
+
 test("signal on a non-blocked marble throws", async () => {
   const st = store(); await st.init()
   const eng = new Engine({ chart, store: st })
