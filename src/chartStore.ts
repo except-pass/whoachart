@@ -25,6 +25,16 @@ export function assertSafeChartName(name: string): void {
   }
 }
 
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await readFile(path, "utf8")
+    return true
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false
+    throw err // a real read error (perms, I/O) must not masquerade as "absent"
+  }
+}
+
 // Atomic publish of arbitrary file content via tmp+rename, so a half-written
 // chart file is never visible to a concurrent boot/reload. Shared by ChartStore
 // (register) and the daemon's update path (writes back to a chart's own file,
@@ -44,9 +54,24 @@ export class ChartStore {
     await mkdir(this.dir, { recursive: true })
   }
 
+  // Canonical write target. New charts are always written as .yaml; a legacy
+  // .yml in the dir is honored on read (see resolvePath) but never created here.
   path(name: string): string {
     assertSafeChartName(name)
     return join(this.dir, `${name}.yaml`)
+  }
+
+  // The actual on-disk path for a chart, honoring a legacy .yml; falls back to
+  // the canonical .yaml when neither exists (so a missing chart surfaces ENOENT
+  // on the expected path). listNames() accepts both extensions, so read/path
+  // MUST too or a .yml chart crashes boot.
+  async resolvePath(name: string): Promise<string> {
+    assertSafeChartName(name)
+    const yaml = join(this.dir, `${name}.yaml`)
+    if (await fileExists(yaml)) return yaml
+    const yml = join(this.dir, `${name}.yml`)
+    if (await fileExists(yml)) return yml
+    return yaml
   }
 
   // Chart names of every *.yaml/*.yml currently on disk (the registry listing).
@@ -58,17 +83,12 @@ export class ChartStore {
   }
 
   async exists(name: string): Promise<boolean> {
-    try {
-      await readFile(this.path(name), "utf8")
-      return true
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return false
-      throw err
-    }
+    assertSafeChartName(name)
+    return (await fileExists(join(this.dir, `${name}.yaml`))) || (await fileExists(join(this.dir, `${name}.yml`)))
   }
 
   async read(name: string): Promise<string> {
-    return readFile(this.path(name), "utf8")
+    return readFile(await this.resolvePath(name), "utf8")
   }
 
   // Note: the daemon's delete path unlinks the chart's own file directly (which

@@ -160,6 +160,9 @@ export class Daemon {
   private chartStore?: ChartStore
   // Serializes all chart-store mutations so two concurrent PUT/POST/DELETEs can't
   // interleave engine swaps. A rejected mutation must not wedge the chain.
+  // TODO(perf): this is a single GLOBAL lock — a hung reload on one chart head-of-
+  // line-blocks mutations on ALL charts for up to the stop() timeout. Bounded, so
+  // not urgent; the fix is a per-chart lock (keyed map of promise chains).
   private mutex: Promise<unknown> = Promise.resolve()
 
   constructor(private opts: DaemonOpts) {}
@@ -201,8 +204,9 @@ export class Daemon {
     if (this.chartStore) {
       for (const name of await this.chartStore.listNames()) {
         if (this.runtimes.has(name)) continue
-        const chart = parseChart(await this.chartStore.read(name))
-        await this.installRuntime(chart, this.chartStore.path(name))
+        const file = await this.chartStore.resolvePath(name) // honor a legacy .yml
+        const chart = parseChart(await readFile(file, "utf8"))
+        await this.installRuntime(chart, file)
       }
     }
   }
@@ -331,9 +335,17 @@ export class Daemon {
 
       // Write back to the chart's own file (authoritative across restarts even
       // for boot-loaded charts outside the store dir), then swap the runtime.
-      await atomicWrite(existing.file, yamlText)
-      const rt = await this.buildRuntime(chart, existing.file)
-      this.runtimes.set(name, rt)
+      // The old engine is stopped at this point — if the write or rebuild throws,
+      // revive it and abort (503) so the chart keeps serving rather than silently
+      // wedging on a stopped engine until the next daemon restart.
+      try {
+        await atomicWrite(existing.file, yamlText)
+        const rt = await this.buildRuntime(chart, existing.file)
+        this.runtimes.set(name, rt)
+      } catch (err) {
+        await existing.engine.resume()
+        throw new ChartError(`chart "${name}" reload failed during rebuild: ${errMsg(err)}`, 503)
+      }
       logLine(
         name,
         `reloaded (preserved=${live.length - conflicts.length}${conflicts.length ? ` force-failed=${conflicts.length}` : ""})`,

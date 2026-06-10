@@ -136,7 +136,8 @@ export class Engine {
           clearTimeout(deadline)
           resolve()
         } else {
-          setTimeout(check, 5)
+          const t = setTimeout(check, 5)
+          ;(t as unknown as { unref?: () => void }).unref?.() // don't hold the event loop open
         }
       }
       check()

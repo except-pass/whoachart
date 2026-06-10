@@ -258,17 +258,63 @@ test("chart writes are loopback-only: a tailnet peer gets 403 on POST/PUT/DELETE
   }
 })
 
-test("a submit concurrent with a hot-reload is never stranded (serialized via the lock)", async () => {
-  // Fire a no-conflict reload and a fresh submit together. Both are serialized
-  // through the daemon mutation lock, so the new marble lands on whichever engine
-  // is current and still reaches the gate — it is never queued onto a discarded
-  // (stopped) engine and lost.
-  const [, m] = await Promise.all([
-    daemon.updateChart("storey", GATE_CHART_SAFE_EDIT),
-    daemon.submit("storey", {}),
-  ])
+test("submit is serialized behind a hot-reload — never enqueues on the discarded engine", async () => {
+  // Park the reload mid-swap (engine stopped, runtime not yet replaced) by
+  // blocking buildRuntime on a barrier, then prove a concurrent submit cannot
+  // run until the reload releases the lock. This deterministically reproduces
+  // the original lost-marble window: without the shared lock, the submit would
+  // enqueue onto the stopped old engine here and be stranded.
+  let release!: () => void
+  const barrier = new Promise<void>((r) => { release = r })
+  const orig = (daemon as any).buildRuntime.bind(daemon)
+  ;(daemon as any).buildRuntime = async (c: any, f: any) => { await barrier; return orig(c, f) }
+
+  const reload = daemon.updateChart("storey", GATE_CHART_SAFE_EDIT) // acquires lock, stops engine, parks at barrier
+  await new Promise((r) => setTimeout(r, 30)) // let updateChart reach the barrier
+
+  const submitP = daemon.submit("storey", {}) // must queue behind the reload
+  await new Promise((r) => setTimeout(r, 30))
+  // mutual exclusion proof: while the reload holds the lock, no marble exists yet
+  expect((await daemon.marbles("storey")).length).toBe(0)
+
+  release()
+  const m = await submitP
+  await reload
+  ;(daemon as any).buildRuntime = orig
+  // the marble landed on the live (new) engine and reached the gate — not lost
   const parked = await waitForStatus(() => daemon.marble("storey", m.id), "blocked")
   expect(parked.node).toBe("gate")
+})
+
+test("a reload whose rebuild throws revives the old chart and returns 503", async () => {
+  const orig = (daemon as any).buildRuntime.bind(daemon)
+  ;(daemon as any).buildRuntime = async () => { throw new Error("boom rebuild") }
+  let status = 0
+  try {
+    await daemon.updateChart("storey", GATE_CHART_SAFE_EDIT)
+  } catch (err) {
+    status = (err as { status?: number }).status ?? 0
+  }
+  expect(status).toBe(503)
+  ;(daemon as any).buildRuntime = orig
+  // the old chart is still alive and serving — a submit still reaches the gate
+  const m = await daemon.submit("storey", {})
+  const parked = await waitForStatus(() => daemon.marble("storey", m.id), "blocked")
+  expect(parked.node).toBe("gate")
+})
+
+test("boot-loads a legacy .yml chart without crashing (read/path honor .yml)", async () => {
+  clearRegistry(); registerBuiltins()
+  const root = await mkdtemp(join(tmpdir(), "wc-yml-"))
+  const cdir = await ensureDir(join(root, "charts"))
+  await writeFile(join(cdir, "ymly.yml"), NEW_CHART.replace("name: freshy", "name: ymly"))
+  const d = new Daemon({ chartsDir: cdir, storeDir: join(root, "store"), client: new FakeCanvas() })
+  await d.start()
+  expect(d.charts()).toContain("ymly")
+  // and it actually runs — proving read() resolved the .yml rather than ENOENT-ing
+  const m = await d.submit("ymly", {})
+  const final = await waitForStatus(() => d.marble("ymly", m.id), "done")
+  expect(final.status).toBe("done")
 })
 
 test("a registered chart survives a daemon restart (store dir is authoritative)", async () => {
