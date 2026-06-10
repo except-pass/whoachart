@@ -52,7 +52,9 @@ test("GET /ui/charts/:name serves the shell html", async () => {
   expect(res.headers.get("content-type")).toContain("text/html")
   const html = await res.text()
   expect(html).toContain("gatey")
-  expect(html).toContain("/ui/app.js")
+  // RELATIVE src — must survive Tinstar's widget proxy (see src/ui/page.ts)
+  expect(html).toContain('src="../app.js"')
+  expect(html).not.toContain('src="/ui/app.js"')
 })
 
 test("GET /ui/charts/unknown is 404", async () => {

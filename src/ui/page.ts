@@ -135,6 +135,12 @@ details.force{margin-top:8px;font-size:11px;color:var(--dim)}
 </div>
 <div id="modal" class="modal hidden"></div>
 <script>globalThis.WHOACHART = { chart: ${JSON.stringify(chartName).replace(/</g, "\\u003c")} }</script>
-<script type="module" src="/ui/app.js"></script>
+<!-- RELATIVE script src: resolves to /ui/app.js when served directly AND to
+     /api/proxy/<wid>/ui/app.js inside Tinstar's widget proxy. The proxy skips
+     rewriting <script> tags entirely (JS-safety), so a root-relative src would
+     escape the proxy and 404 against the Tinstar SPA. Module imports inside
+     app.js are relative too, and the proxy's runtime shim patches our
+     root-relative fetch() calls. Keep this relative. -->
+<script type="module" src="../app.js"></script>
 </body></html>`
 }
