@@ -5,6 +5,7 @@ import { hue, ringFor, fmtAge, fmtMs, ageSeconds, slotPos, counterPos, escHtml, 
 import { renderForm, readForm, showFieldErrors } from "./forms.js"
 import { showMarble, selectedMarble, clearDrawer, deselectMarble } from "./drawer.js"
 import { showNode, selectedNode, clearNodeDrawer } from "./nodeDrawer.js"
+import { mountMarbleSearch } from "./marbleSearch.js"
 
 const NS = "http://www.w3.org/2000/svg"
 const CHART = globalThis.WHOACHART.chart
@@ -532,6 +533,7 @@ async function boot() {
     return
   }
   drawStatic()
+  mountMarbleSearch({ chart: CHART, openMarble: openDrawer }) // marble history search (roadmap 3c)
   clearNodeDrawer() // reset both selections to "nothing selected" (clearDrawer only handles the marble side)
   clearDrawer()
   setInterval(tickAges, 1000)
