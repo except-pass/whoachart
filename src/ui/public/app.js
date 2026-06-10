@@ -1,7 +1,7 @@
 // whoachart control surface client. Draws the chart from /def, polls /state,
 // and renders marbles that travel along the edge curves. The page never
 // reloads — all updates are DOM reconciliation + rAF animation.
-import { hue, ringFor, fmtAge, fmtMs, ageSeconds, slotPos, counterPos, escHtml } from "./helpers.js"
+import { hue, ringFor, fmtAge, fmtMs, ageSeconds, slotPos, counterPos, escHtml, isDangerEdge } from "./helpers.js"
 import { renderForm, readForm, showFieldErrors } from "./forms.js"
 import { showMarble, selectedMarble, clearDrawer } from "./drawer.js"
 
@@ -43,11 +43,12 @@ function toast(msg) {
 }
 
 const API = {
+  toast,
   async marble(id) {
     const res = await fetch(api(`/marbles/${id}`), { cache: "no-store" })
     return res.ok ? jsonOrNull(res) : null
   },
-  // returns null on success, {fields} on validation failure; other errors toast
+  // returns null on success, {fields} on validation failure, {message} otherwise
   async signal(id, body) {
     const res = await fetch(api(`/marbles/${id}/signal`), {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -55,8 +56,7 @@ const API = {
     if (res.ok) return null
     const b = await jsonOrNull(res)
     if (b?.fields) return { fields: b.fields }
-    toast(b?.error ?? `signal failed (${res.status})`)
-    return null
+    return { message: b?.error ?? `signal failed (${res.status})` }
   },
   async retry(id) {
     const res = await fetch(api(`/marbles/${id}/retry`), { method: "POST" })
@@ -66,7 +66,11 @@ const API = {
     }
   },
   async focusSession(id) {
-    await fetch(api(`/marbles/${id}/focus-session`), { method: "POST" })
+    const res = await fetch(api(`/marbles/${id}/focus-session`), { method: "POST" })
+    if (!res.ok) {
+      const b = await jsonOrNull(res)
+      toast(b?.error ?? `focus-session failed (${res.status})`)
+    }
   },
   async submit(context) {
     const res = await fetch(api(`/marbles`), {
@@ -74,7 +78,8 @@ const API = {
     })
     if (res.ok) return null
     const b = await jsonOrNull(res)
-    return b?.fields ? { fields: b.fields } : null
+    if (b?.fields) return { fields: b.fields }
+    return { message: b?.error ?? `submit failed (${res.status})` }
   },
 }
 
@@ -265,7 +270,7 @@ function drawGateButtons(live) {
     const b = BOX[m.node]
     if (!b) continue
     m.gate.edges.forEach((edge, i) => {
-      const g = el("g", { class: `gatebtn${/reject|decline|fail|no/.test(edge.name) ? " danger" : ""}` }, gOverlay)
+      const g = el("g", { class: `gatebtn${isDangerEdge(edge.name) ? " danger" : ""}` }, gOverlay)
       const y = b.y + 4 + i * 24
       el("rect", { x: b.x + b.w + 8, y, width: 96, height: 20 }, g)
       const t = el("text", { x: b.x + b.w + 56, y: y + 14 }, g)
@@ -273,7 +278,7 @@ function drawGateButtons(live) {
       t.textContent = `${name} · ${m.id.slice(0, 2)}`
       g.addEventListener("click", () => {
         if (edge.form && edge.form.length > 0) openEdgeModal(m.id, edge)
-        else void API.signal(m.id, { next: edge.name })
+        else void API.signal(m.id, { next: edge.name }).then((r) => { if (r?.message) toast(r.message) })
       })
     })
   }
@@ -351,15 +356,16 @@ function renderBar(state) {
 function openModal(title, fields, onSubmit) {
   const modal = $("modal")
   modal.innerHTML = `<div class="box"><h3>${escHtml(title)}</h3>${renderForm(fields)}
+    <div class="ferr" id="mErr"></div>
     <div style="margin-top:12px"><button class="act" id="mGo">submit</button>
     <button class="act" id="mCancel" style="border-color:#3a4a5a;color:var(--dim);background:none">cancel</button></div></div>`
   modal.classList.remove("hidden")
   modal.querySelector("#mCancel").addEventListener("click", closeModal)
-  modal.addEventListener("click", (ev) => { if (ev.target === modal) closeModal() }, { once: true })
   modal.querySelector("#mGo").addEventListener("click", async () => {
     const values = readForm(modal, fields)
     const err = await onSubmit(values)
     if (err?.fields) showFieldErrors(modal, err.fields)
+    else if (err?.message) modal.querySelector("#mErr").textContent = err.message
     else closeModal()
   })
 }
@@ -369,6 +375,9 @@ function closeModal() {
   modal.classList.add("hidden")
   modal.innerHTML = ""
 }
+
+// backdrop dismiss — registered once; clicks inside the box don't match
+$("modal").addEventListener("click", (ev) => { if (ev.target === $("modal")) closeModal() })
 
 function openIntakeModal(sourceNode) {
   openModal(`new marble — ${sourceNode.name ?? sourceNode.id}`, sourceNode.form ?? [], (values) => API.submit(values))
@@ -390,7 +399,9 @@ function openDrawer(id) {
 async function tick() {
   let state
   try {
-    state = await fetch(api("/state"), { cache: "no-store" }).then((r) => r.json())
+    const r = await fetch(api("/state"), { cache: "no-store" })
+    if (!r.ok) return
+    state = await r.json()
   } catch {
     return // daemon momentarily unreachable; keep the last frame
   }
@@ -432,18 +443,25 @@ async function tick() {
 
 // ---------- boot ----------
 
+// Chained (not setInterval) so slow /state responses can't overlap and land
+// out of order, regressing lastState to an older snapshot.
+function pollLoop() {
+  tick().catch(() => {}).finally(() => setTimeout(pollLoop, 600))
+}
+
 async function boot() {
   try {
-    DEF = await fetch(api("/def")).then((r) => r.json())
+    const r = await fetch(api("/def"))
+    if (!r.ok) throw new Error(`/def returned ${r.status}`)
+    DEF = await r.json()
   } catch (err) {
     document.querySelector(".bar").textContent = `whoachart — daemon unreachable (${err})`
     return
   }
   drawStatic()
   clearDrawer()
-  setInterval(tick, 600)
   setInterval(tickAges, 1000)
-  void tick()
+  pollLoop()
 }
 
 void boot()

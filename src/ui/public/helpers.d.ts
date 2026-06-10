@@ -6,5 +6,6 @@ export function fmtMs(ms: number): string
 export function ageSeconds(enteredAt: string, nowMs: number): number
 export function slotPos(box: { x: number; y: number; w: number; h: number }, i: number, n: number): { x: number; y: number }
 export function counterPos(box: { x: number; y: number; w: number; h: number }): { x: number; y: number }
+export function isDangerEdge(name: string): boolean
 export function enumWidget(options: string[]): "radio" | "select"
 export function escHtml(s: unknown): string

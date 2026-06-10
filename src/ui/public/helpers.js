@@ -49,6 +49,13 @@ export function counterPos(box) {
   return { x: box.x + box.w / 2 + 80, y: box.y + box.h + 17 }
 }
 
+// Gate edges with refusal semantics get danger styling. Word-start match for
+// the verbs (covers "rejected", "failed"); "no" must be a whole word so names
+// like "acknowledge", "snooze", or "normal" don't read as destructive.
+export function isDangerEdge(name) {
+  return /\b(reject|decline|fail)|\bno\b/.test(name)
+}
+
 // Enum fields render as radios when short, a dropdown when long.
 export function enumWidget(options) {
   return options.length <= 4 ? "radio" : "select"

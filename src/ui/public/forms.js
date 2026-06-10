@@ -21,7 +21,10 @@ export function renderForm(fields) {
               )
               .join("")}</div>`
           } else {
-            input = `<select name="f_${escHtml(f.key)}">${opts
+            // no default → empty placeholder, so an untouched optional select
+            // submits nothing (matching the unchecked-radio behavior)
+            const placeholder = opts.includes(f.default) ? "" : `<option value=""></option>`
+            input = `<select name="f_${escHtml(f.key)}">${placeholder}${opts
               .map((o) => `<option value="${escHtml(o)}"${o === f.default ? " selected" : ""}>${escHtml(o)}</option>`)
               .join("")}</select>`
           }
@@ -56,7 +59,7 @@ export function renderForm(fields) {
 export function readForm(container, fields) {
   const values = {}
   for (const f of fields) {
-    const els = container.querySelectorAll(`[name="f_${f.key}"]`)
+    const els = container.querySelectorAll(`[name="f_${f.key.replace(/["\\]/g, "\\$&")}"]`)
     if (els.length === 0) continue
     if (f.type === "boolean") {
       values[f.key] = els[0].checked

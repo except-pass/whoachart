@@ -1,12 +1,13 @@
 // Marble inspector drawer: journey + dwell timings, gate presentation,
 // decision buttons (with edge forms), session focus, retry.
-import { escHtml, fmtMs, hue } from "./helpers.js"
+import { escHtml, fmtMs, hue, isDangerEdge } from "./helpers.js"
 import { renderForm, readForm, showFieldErrors } from "./forms.js"
 
 const body = () => document.getElementById("drawerBody")
 
 let current = null // marble id the drawer is showing
 let lastRender = "" // change-detection key so polling doesn't flicker the DOM
+let fetchSeq = 0 // discard out-of-order marble fetches from overlapping polls
 
 export function selectedMarble() {
   return current
@@ -47,12 +48,12 @@ function presentHtml(m, gate) {
         case "json":
           rendered = `<pre class="json">${escHtml(JSON.stringify(v, null, 2))}</pre>`
           break
-        case "link": {
-          // context values are agent/user-supplied — only allow http(s) hrefs
-          const url = /^https?:\/\//i.test(String(v)) ? String(v) : "#"
-          rendered = `<a href="${escHtml(url)}" target="_blank" rel="noopener" style="color:var(--cyan)">${escHtml(String(v))}</a>`
+        case "link":
+          // context values are agent/user-supplied — only http(s) gets an <a>
+          rendered = /^https?:\/\//i.test(String(v))
+            ? `<a href="${escHtml(String(v))}" target="_blank" rel="noopener" style="color:var(--cyan)">${escHtml(String(v))}</a>`
+            : escHtml(String(v))
           break
-        }
         // markdown renders as plain text for v1 — line breaks preserved by the CSS
         default:
           rendered = escHtml(String(v))
@@ -66,7 +67,7 @@ function decisionHtml(gate) {
   const buttons = gate.edges
     .map(
       (e, i) =>
-        `<button class="act${/reject|decline|fail|no/.test(e.name) ? " danger" : ""}" data-edge="${i}">${escHtml(e.name)}</button>`,
+        `<button class="act${isDangerEdge(e.name) ? " danger" : ""}" data-edge="${i}">${escHtml(e.name)}</button>`,
     )
     .join("")
   return gate.agent
@@ -74,11 +75,12 @@ function decisionHtml(gate) {
     : `<div style="margin-top:10px">${buttons}</div>`
 }
 
-// Render (or re-render) the drawer for a marble. api = {marble, signal, retry, focusSession}
+// Render (or re-render) the drawer for a marble. api = {marble, signal, retry, focusSession, toast}
 export async function showMarble(id, gateInfo, api) {
   current = id
+  const seq = ++fetchSeq
   const m = await api.marble(id)
-  if (!m || current !== id) return
+  if (!m || current !== id || seq !== fetchSeq) return
   const el = body()
 
   // Don't clobber the DOM while the user is typing in a drawer form, and
@@ -115,7 +117,7 @@ export async function showMarble(id, gateInfo, api) {
       if (edge.form && edge.form.length > 0) {
         openEdgeForm(el.querySelector("#dForm"), edge, id, api)
       } else {
-        void api.signal(id, { next: edge.name })
+        void api.signal(id, { next: edge.name }).then((r) => { if (r?.message) api.toast(r.message) })
       }
     })
   }
@@ -131,6 +133,7 @@ function openEdgeForm(container, edge, id, api) {
   container.querySelector("#dFormGo").addEventListener("click", async () => {
     const merge = readForm(container, edge.form)
     const res = await api.signal(id, { next: edge.name, merge })
-    if (res && res.fields) showFieldErrors(container, res.fields)
+    if (res?.fields) showFieldErrors(container, res.fields)
+    else if (res?.message) api.toast(res.message)
   })
 }

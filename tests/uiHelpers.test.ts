@@ -1,8 +1,19 @@
 import { test, expect } from "bun:test"
 // helpers.js is plain ESM — bun imports it directly
 import {
-  hue, ringFor, fmtAge, fmtMs, ageSeconds, slotPos, counterPos, enumWidget, escHtml,
+  hue, ringFor, fmtAge, fmtMs, ageSeconds, slotPos, counterPos, enumWidget, escHtml, isDangerEdge,
 } from "../src/ui/public/helpers.js"
+
+test("isDangerEdge matches whole words only", () => {
+  expect(isDangerEdge("reject")).toBe(true)
+  expect(isDangerEdge("decline politely")).toBe(true)
+  expect(isDangerEdge("no")).toBe(true)
+  expect(isDangerEdge("mark failed")).toBe(true)
+  expect(isDangerEdge("acknowledge")).toBe(false)
+  expect(isDangerEdge("snooze")).toBe(false)
+  expect(isDangerEdge("normal")).toBe(false)
+  expect(isDangerEdge("approve")).toBe(false)
+})
 
 test("hue is deterministic and varies by id", () => {
   expect(hue("abc")).toBe(hue("abc"))
