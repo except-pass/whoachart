@@ -53,7 +53,8 @@ function pct(samples: number[], p: number): number | null {
 // In-memory aggregate of a chart's marbles for the live view. Updated O(1) per
 // engine onChange — never rescans the store. Bounded by design: in-flight
 // marbles individually, last-N completed dots + counters per end node, last-20
-// dead letters, 64 dwell samples per node. In-memory only (resets on restart).
+// dead letters, 64 dwell samples per node. In-memory, but warm-started on
+// boot: seed() recomputes tallies and dwell stats from the stored trails.
 export class ViewState {
   private live = new Map<string, LiveMarble>()
   private ends = new Map<string, EndTally>()

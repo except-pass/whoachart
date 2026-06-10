@@ -189,6 +189,9 @@ export class Daemon {
     }
   }
 
+  // NOTE: `opts.start` targeting a non-source node bypasses intake-form
+  // validation by design (operator-trusted API, used for testing/repair).
+  // UI clients must not surface arbitrary `start` to end users.
   async submit(name: string, opts: SubmitOpts = {}): Promise<Marble> {
     const rt = this.rt(name)
     const startId = opts.start ?? rt.start
