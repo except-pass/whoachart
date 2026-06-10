@@ -6,6 +6,7 @@ import { Daemon } from "../src/daemon"
 import { createControlApi } from "../src/controlApi"
 import { clearRegistry } from "../src/registry"
 import { FakeCanvas, FakeLauncher } from "./fakes"
+import { waitFor } from "./poll"
 
 const CHART = `
 name: agency
@@ -42,7 +43,11 @@ afterEach(() => server.stop(true))
 test("POST .../signal resumes a blocked marble", async () => {
   const sub = await fetch(`${base}/api/charts/agency/marbles`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
   const { id } = (await sub.json()) as any
-  await new Promise((r) => setTimeout(r, 250)) // let it reach the agent node
+  // let it reach (and block at) the agent node before signaling
+  await waitFor(async () => {
+    const m = (await (await fetch(`${base}/api/charts/agency/marbles/${id}`)).json()) as any
+    return m.status === "blocked"
+  }, { label: "marble blocks at agent node" })
 
   const res = await fetch(`${base}/api/charts/agency/marbles/${id}/signal`, {
     method: "POST",
@@ -50,8 +55,10 @@ test("POST .../signal resumes a blocked marble", async () => {
     body: JSON.stringify({ next: "pass", merge: { verdict: "ok" } }),
   })
   expect(res.status).toBe(200)
-  await new Promise((r) => setTimeout(r, 250))
-  const m = (await (await fetch(`${base}/api/charts/agency/marbles/${id}`)).json()) as any
+  const m = await waitFor(async () => {
+    const x = (await (await fetch(`${base}/api/charts/agency/marbles/${id}`)).json()) as any
+    return x.status === "done" ? x : null
+  }, { label: "marble completes after signal" })
   expect(m.status).toBe("done")
   expect(m.context.verdict).toBe("ok")
 })

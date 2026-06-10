@@ -7,6 +7,7 @@ import { Daemon } from "../src/daemon"
 import { createControlApi } from "../src/controlApi"
 import { clearRegistry } from "../src/registry"
 import { FakeCanvas, FakeLauncher } from "./fakes"
+import { waitFor } from "./poll"
 
 const CHART = `
 name: gatey
@@ -117,7 +118,11 @@ test("retry route 400s for non-failed; focus-session 404s without a session", as
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ context: { title: "x" } }),
   })
   const { id } = (await sub.json()) as any
-  await new Promise((r) => setTimeout(r, 200))
+  // let the marble settle at the gate (blocked) before exercising the routes
+  await waitFor(async () => {
+    const m = (await (await fetch(`${base}/api/charts/gatey/marbles/${id}`)).json()) as any
+    return m?.status === "blocked"
+  }, { label: "marble blocks at the gate" })
   expect((await fetch(`${base}/api/charts/gatey/marbles/${id}/retry`, { method: "POST" })).status).toBe(400)
   expect((await fetch(`${base}/api/charts/gatey/marbles/${id}/focus-session`, { method: "POST" })).status).toBe(404)
 })

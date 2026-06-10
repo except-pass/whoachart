@@ -6,6 +6,7 @@ import { Daemon } from "../src/daemon"
 import { clearRegistry } from "../src/registry"
 import { registerBuiltins } from "../src/nodeTypes"
 import { FakeCanvas } from "./fakes"
+import { waitForStatus } from "./poll"
 
 const CHART = `
 name: demo
@@ -43,10 +44,9 @@ test("submit runs a marble to completion (default start = source node)", async (
   const d = new Daemon({ charts: [await chartFile()], storeDir: join(tmpdir(), "wc-st-" + crypto.randomUUID().slice(0, 8)), client: new FakeCanvas() })
   await d.start()
   const m = await d.submit("demo", { context: { hi: 1 } })
-  await new Promise((r) => setTimeout(r, 200))
-  const final = await d.marble("demo", m.id)
-  expect(final?.status).toBe("done")
-  expect(final?.context.ran).toBe(true)
+  const final = await waitForStatus(() => d.marble("demo", m.id), "done")
+  expect(final.status).toBe("done")
+  expect(final.context.ran).toBe(true)
 })
 
 test("submit on an unknown chart throws", async () => {

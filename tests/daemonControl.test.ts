@@ -7,6 +7,7 @@ import { Daemon } from "../src/daemon"
 import { FormError } from "../src/forms"
 import { clearRegistry } from "../src/registry"
 import { FakeCanvas, FakeLauncher } from "./fakes"
+import { waitFor, waitForStatus } from "./poll"
 
 const CHART = `
 name: gatey
@@ -83,25 +84,26 @@ test("submit validates the source form", async () => {
 test("signal validates the chosen edge form (agents held to it too)", async () => {
   const { d } = await makeDaemon()
   const m = await d.submit("gatey", { context: { title: "hi" } })
-  await new Promise((r) => setTimeout(r, 200)) // reach the gate
+  await waitForStatus(() => d.marble("gatey", m.id), "blocked") // reach the gate
   await expect(d.signal("gatey", m.id, { next: "decline", merge: {} })).rejects.toThrow(FormError)
   await d.signal("gatey", m.id, { next: "decline", merge: { reason: "nope" } })
-  await new Promise((r) => setTimeout(r, 200))
-  const f = await d.marble("gatey", m.id)
-  expect(f!.node).toBe("no")
-  expect(f!.context.reason).toBe("nope")
+  const f = await waitFor(async () => {
+    const m2 = await d.marble("gatey", m.id)
+    return m2?.node === "no" ? m2 : null
+  }, { label: "marble reaches the 'no' end node" })
+  expect(f.node).toBe("no")
+  expect(f.context.reason).toBe("nope")
 })
 
 test("retry passes through and focusSession reports status", async () => {
   const { d, canvas } = await makeDaemon()
   const m = await d.submit("gatey", { context: { title: "hi" } })
-  await new Promise((r) => setTimeout(r, 200))
+  await waitForStatus(() => d.marble("gatey", m.id), "blocked")
   expect(await d.focusSession("gatey", m.id)).toBe("no-session")
   await expect(d.retry("gatey", m.id)).rejects.toThrow(/not failed/)
   // focusSession with a session present pans
   const m2 = await d.submit("gatey", { context: { title: "x" } })
-  await new Promise((r) => setTimeout(r, 200))
-  const rec = (await d.marble("gatey", m2.id))!
+  const rec = await waitForStatus(() => d.marble("gatey", m2.id), "blocked")
   rec.context._session = "wc-fake"
   const { MarbleStore } = await import("../src/store")
   // write the session into the store so focusSession sees it

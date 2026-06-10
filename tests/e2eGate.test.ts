@@ -6,6 +6,7 @@ import { Daemon } from "../src/daemon"
 import { createControlApi } from "../src/controlApi"
 import { clearRegistry } from "../src/registry"
 import { FakeCanvas, FakeLauncher } from "./fakes"
+import { waitFor } from "./poll"
 
 let server: ReturnType<typeof Bun.serve>
 let base: string
@@ -39,9 +40,11 @@ test("full human-gate flow: validated intake, gate info, validated decline, appr
   const sub = await post("/api/charts/gate-demo/marbles", { context: { title: "first", priority: "high" } })
   expect(sub.status).toBe(201)
   const { id } = (await sub.json()) as any
-  await new Promise((r) => setTimeout(r, 250))
-  const state = (await (await fetch(`${base}/api/charts/gate-demo/state`)).json()) as any
-  const lm = state.live.find((m: any) => m.id === id)
+  const lm = await waitFor(async () => {
+    const state = (await (await fetch(`${base}/api/charts/gate-demo/state`)).json()) as any
+    const m = state.live.find((x: any) => x.id === id)
+    return m?.status === "blocked" ? m : null
+  }, { label: "marble blocks at the gate" })
   expect(lm.status).toBe("blocked")
   expect(lm.gate.agent).toBe(false)
   expect(lm.gate.edges.map((e: any) => e.name).sort()).toEqual(["approve", "decline"])
@@ -54,8 +57,10 @@ test("full human-gate flow: validated intake, gate info, validated decline, appr
 
   // 4. declining with a reason lands at the declined end with reason merged
   await post(`/api/charts/gate-demo/marbles/${id}/signal`, { next: "decline", merge: { reason: "not ready" } })
-  await new Promise((r) => setTimeout(r, 250))
-  const m1 = (await (await fetch(`${base}/api/charts/gate-demo/marbles/${id}`)).json()) as any
+  const m1 = await waitFor(async () => {
+    const m = (await (await fetch(`${base}/api/charts/gate-demo/marbles/${id}`)).json()) as any
+    return m.node === "declined" ? m : null
+  }, { label: "marble lands at declined" })
   expect(m1.node).toBe("declined")
   expect(m1.context.reason).toBe("not ready")
   expect(m1.trail.map((h: any) => h.node)).toEqual(["ingest", "prep", "approve", "declined"])
@@ -63,10 +68,15 @@ test("full human-gate flow: validated intake, gate info, validated decline, appr
   // 5. a second marble approved goes to shipped
   const sub2 = await post("/api/charts/gate-demo/marbles", { context: { title: "second" } })
   const { id: id2 } = (await sub2.json()) as any
-  await new Promise((r) => setTimeout(r, 250))
+  await waitFor(async () => {
+    const m = (await (await fetch(`${base}/api/charts/gate-demo/marbles/${id2}`)).json()) as any
+    return m.status === "blocked" ? m : null
+  }, { label: "second marble blocks at the gate" })
   await post(`/api/charts/gate-demo/marbles/${id2}/signal`, { next: "approve" })
-  await new Promise((r) => setTimeout(r, 250))
-  const m2 = (await (await fetch(`${base}/api/charts/gate-demo/marbles/${id2}`)).json()) as any
+  const m2 = await waitFor(async () => {
+    const m = (await (await fetch(`${base}/api/charts/gate-demo/marbles/${id2}`)).json()) as any
+    return m.node === "shipped" ? m : null
+  }, { label: "second marble ships" })
   expect(m2.node).toBe("shipped")
   expect(m2.context.priority).toBe("med") // form default applied
 })
@@ -74,14 +84,21 @@ test("full human-gate flow: validated intake, gate info, validated decline, appr
 test("dead letter + retry round-trip via the API", async () => {
   const sub = await post("/api/charts/gate-demo/marbles", { context: { title: "boomer" }, start: "breaker" })
   const { id } = (await sub.json()) as any
-  await new Promise((r) => setTimeout(r, 250))
-  let state = (await (await fetch(`${base}/api/charts/gate-demo/state`)).json()) as any
-  expect(state.deadLetter.map((d: any) => d.id)).toContain(id)
+  const landed = await waitFor(async () => {
+    const state = (await (await fetch(`${base}/api/charts/gate-demo/state`)).json()) as any
+    return state.deadLetter.some((d: any) => d.id === id) ? state : null
+  }, { label: "marble lands in the dead-letter tray" })
+  expect(landed.deadLetter.map((d: any) => d.id)).toContain(id)
+  const failedAt = (await (await fetch(`${base}/api/charts/gate-demo/marbles/${id}`)).json() as any).updatedAt
 
   const res = await fetch(`${base}/api/charts/gate-demo/marbles/${id}/retry`, { method: "POST" })
   expect(res.status).toBe(200)
-  await new Promise((r) => setTimeout(r, 250))
-  state = (await (await fetch(`${base}/api/charts/gate-demo/state`)).json()) as any
-  // breaker always fails: it lands back in the tray, but only once (same id)
+  // breaker always fails: wait for the retry to re-process (updatedAt advances)
+  // and confirm it lands back in the tray exactly once (same id).
+  const state = await waitFor(async () => {
+    const m = (await (await fetch(`${base}/api/charts/gate-demo/marbles/${id}`)).json()) as any
+    if (m.status !== "failed" || m.updatedAt === failedAt) return null
+    return (await (await fetch(`${base}/api/charts/gate-demo/state`)).json()) as any
+  }, { label: "marble re-fails after retry" })
   expect(state.deadLetter.filter((d: any) => d.id === id)).toHaveLength(1)
 })

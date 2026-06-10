@@ -6,6 +6,7 @@ import { createControlApi } from "../src/controlApi"
 import type { SessionLauncher, SpawnSessionOpts } from "../src/tinstar"
 import { clearRegistry } from "../src/registry"
 import { FakeCanvas } from "./fakes"
+import { waitForStatus } from "./poll"
 
 // A launcher that behaves like a real agent: reads the signal URL out of its
 // brief and (after a beat) signals 'approve' through the control API — the
@@ -46,15 +47,14 @@ test("agent-review example: marble blocks, fake agent signals, marble ships, ses
   try {
     const m = await daemon.submit("agent-review", { context: { title: "Q3 post" } })
     // wait for: reach agent node → block → auto-signal → resume → done
-    let final = null as any
-    for (let i = 0; i < 40; i++) {
-      await new Promise((r) => setTimeout(r, 100))
-      final = await daemon.marble("agent-review", m.id)
-      if (final?.status === "done" || final?.status === "failed") break
-    }
-    expect(final?.status).toBe("done")
-    expect(final?.node).toBe("published")
-    expect(final?.context.reviewed_by).toContain("wc-agent-review-")
+    const final = await waitForStatus(
+      () => daemon.marble("agent-review", m.id),
+      ["done", "failed"],
+      "agent round-trip completes",
+    )
+    expect(final.status).toBe("done")
+    expect(final.node).toBe("published")
+    expect(final.context.reviewed_by).toContain("wc-agent-review-")
     expect(launcher.stopped).toHaveLength(1)
   } finally {
     server.stop(true)

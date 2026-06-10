@@ -5,6 +5,7 @@ import { writeFile, mkdtemp } from "node:fs/promises"
 import { Daemon } from "../src/daemon"
 import { clearRegistry } from "../src/registry"
 import { FakeCanvas, FakeLauncher } from "./fakes"
+import { waitFor, waitForStatus } from "./poll"
 
 const CHART = `
 name: agency
@@ -49,10 +50,9 @@ test("marble blocks at the agent node with a spawned session", async () => {
   const launcher = new FakeLauncher()
   const d = await makeDaemon(launcher)
   const m = await d.submit("agency", {})
-  await new Promise((r) => setTimeout(r, 250))
-  const blocked = await d.marble("agency", m.id)
-  expect(blocked?.status).toBe("blocked")
-  expect(blocked?.node).toBe("review")
+  const blocked = await waitForStatus(() => d.marble("agency", m.id), "blocked")
+  expect(blocked.status).toBe("blocked")
+  expect(blocked.node).toBe("review")
   expect(launcher.spawned).toHaveLength(1)
   expect(launcher.spawned[0].prompt).toContain("http://localhost:5330/api/charts/agency/marbles/" + m.id + "/signal")
 })
@@ -61,13 +61,12 @@ test("signal resumes the marble and stops the session", async () => {
   const launcher = new FakeLauncher()
   const d = await makeDaemon(launcher)
   const m = await d.submit("agency", {})
-  await new Promise((r) => setTimeout(r, 250))
+  await waitForStatus(() => d.marble("agency", m.id), "blocked")
   await d.signal("agency", m.id, { next: "pass", merge: { verdict: "ship it" } })
-  await new Promise((r) => setTimeout(r, 250))
-  const f = await d.marble("agency", m.id)
-  expect(f?.status).toBe("done")
-  expect(f?.node).toBe("ok")
-  expect(f?.context.verdict).toBe("ship it")
+  const f = await waitForStatus(() => d.marble("agency", m.id), "done")
+  expect(f.status).toBe("done")
+  expect(f.node).toBe("ok")
+  expect(f.context.verdict).toBe("ship it")
   expect(launcher.stopped).toEqual([launcher.spawned[0].name])
 })
 
@@ -82,7 +81,7 @@ test("two daemons in one process keep separate launcher + signal-URL wiring", as
 
   const ma = await da.submit("agency", {})
   const mb = await db.submit("agency", {})
-  await new Promise((r) => setTimeout(r, 250))
+  await waitFor(() => a.spawned.length === 1 && b.spawned.length === 1, { label: "both daemons spawned" })
 
   expect(a.spawned).toHaveLength(1)
   expect(b.spawned).toHaveLength(1)
