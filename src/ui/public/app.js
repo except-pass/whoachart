@@ -231,16 +231,25 @@ function setCount(node, total) {
 
 function drawGateButtons(live) {
   gOverlay.replaceChildren()
+  // One button set per gate node, acting on the OLDEST blocked marble there
+  // (FIFO) — per-marble sets would stack unreadably. The label names the
+  // marble so the target is unambiguous; other marbles decide via the drawer.
+  const byNode = new Map()
   for (const m of live) {
     if (m.status !== "blocked" || !m.gate || m.gate.agent) continue // agents: force via drawer only
+    const cur = byNode.get(m.node)
+    if (!cur || m.enteredAt < cur.enteredAt) byNode.set(m.node, m)
+  }
+  for (const m of byNode.values()) {
     const b = BOX[m.node]
     if (!b) continue
     m.gate.edges.forEach((edge, i) => {
       const g = el("g", { class: `gatebtn${/reject|decline|fail|no/.test(edge.name) ? " danger" : ""}` }, gOverlay)
       const y = b.y + 4 + i * 24
-      el("rect", { x: b.x + b.w + 8, y, width: 76, height: 20 }, g)
-      const t = el("text", { x: b.x + b.w + 46, y: y + 14 }, g)
-      t.textContent = edge.name.length > 11 ? edge.name.slice(0, 10) + "…" : edge.name
+      el("rect", { x: b.x + b.w + 8, y, width: 96, height: 20 }, g)
+      const t = el("text", { x: b.x + b.w + 56, y: y + 14 }, g)
+      const name = edge.name.length > 9 ? edge.name.slice(0, 8) + "…" : edge.name
+      t.textContent = `${name} · ${m.id.slice(0, 2)}`
       g.addEventListener("click", () => {
         if (edge.form && edge.form.length > 0) openEdgeModal(m.id, edge)
         else void API.signal(m.id, { next: edge.name })
