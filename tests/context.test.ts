@@ -44,7 +44,9 @@ test("runShell kills the process when the signal aborts (no orphan side effects)
   // Abort shortly after spawn; the script would write the marker at 1s if it
   // were allowed to keep running past the deadline.
   setTimeout(() => ctrl.abort(), 50)
-  await runShell(`sleep 1 && touch "${marker}"`, marble(), node, ctrl.signal)
+  const out = await runShell(`sleep 1 && touch "${marker}"`, marble(), node, ctrl.signal)
+  // runShell must RESOLVE after the kill (proc.exited fires on SIGTERM), not hang.
+  expect(out).toBeDefined()
 
   // Give the (killed) process well past its 1s sleep to prove it never ran on.
   await new Promise((r) => setTimeout(r, 1200))

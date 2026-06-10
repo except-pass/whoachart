@@ -88,4 +88,8 @@ test("two daemons in one process keep separate launcher + signal-URL wiring", as
   expect(b.spawned).toHaveLength(1)
   expect(a.spawned[0].prompt).toContain(`http://daemon-a:1111/api/charts/agency/marbles/${ma.id}/signal`)
   expect(b.spawned[0].prompt).toContain(`http://daemon-b:2222/api/charts/agency/marbles/${mb.id}/signal`)
+  // ...and crucially NOT cross-contaminated — a shared-wiring regression would
+  // leak the other daemon's baseUrl into the brief.
+  expect(a.spawned[0].prompt).not.toContain("daemon-b")
+  expect(b.spawned[0].prompt).not.toContain("daemon-a")
 })

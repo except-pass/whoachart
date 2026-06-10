@@ -71,6 +71,28 @@ test("signal without next on a multi-edge node throws (cannot route)", async () 
   expect((await st.load(m.id))?.status).toBe("blocked")
 })
 
+test("signal({}) succeeds on a single unnamed-edge node (guard must not block legit routing)", async () => {
+  const single: Chart = {
+    name: "single",
+    nodes: [
+      { id: "wait", type: "waiter", config: {} },
+      { id: "done", type: "end", config: { outcome: "success" } },
+    ],
+    edges: [{ from: "wait", to: "done" }], // one unnamed edge — no `next` needed
+  }
+  const st = store(); await st.init()
+  const eng = new Engine({ chart: single, store: st })
+  const m = newMarble("single", "wait")
+  await eng.submit(m); await eng.drain()
+  expect((await st.load(m.id))?.status).toBe("blocked")
+
+  await eng.signal(m.id, {}) // no next — must route along the sole edge
+  await eng.drain()
+  const f = await st.load(m.id)
+  expect(f?.status).toBe("done")
+  expect(f?.node).toBe("done")
+})
+
 test("signal on a non-blocked marble throws", async () => {
   const st = store(); await st.init()
   const eng = new Engine({ chart, store: st })

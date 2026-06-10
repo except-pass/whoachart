@@ -54,7 +54,9 @@ export function makeAgentNode(
     type: "agent",
     configSchema: agentConfigSchema,
     async run(ctx) {
-      const cfg = ctx.node.config as { brief: string; cli_template?: string; project?: string }
+      // keep_session is read by Daemon.signal (session teardown), not here; the
+      // cast mirrors the full schema so the omission is intentional, not a miss.
+      const cfg = ctx.node.config as { brief: string; cli_template?: string; project?: string; keep_session?: boolean }
       const edges = ctx.outgoing.map((e) => e.name ?? e.to)
       const name = `wc-${ctx.marble.chart}-${ctx.marble.id}`.toLowerCase().replace(/[^a-z0-9-]/g, "-")
       const { name: sessionName } = await launcher.spawnSession({
