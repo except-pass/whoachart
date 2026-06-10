@@ -352,8 +352,11 @@ function renderBar(state) {
 
 // ---------- modal ----------
 
+let modalGen = 0 // bumped each open/close so a stale in-flight submit can't paint onto a newer modal
+
 export function openModal(title, fields, onSubmit) {
   const modal = $("modal")
+  const gen = ++modalGen
   modal.innerHTML = `<div class="box"><h3>${escHtml(title)}</h3>${renderForm(fields)}
     <div class="ferr" id="mErr"></div>
     <div style="margin-top:12px"><button class="act" id="mGo">submit</button>
@@ -367,7 +370,8 @@ export function openModal(title, fields, onSubmit) {
     try {
       const values = readForm(modal, fields)
       const err = await onSubmit(values)
-      // modal may have been dismissed mid-flight — #mErr is gone, nothing to paint
+      // modal may have been dismissed or reopened mid-flight — don't paint onto a newer modal
+      if (gen !== modalGen) return
       const mErr = modal.querySelector("#mErr")
       if (!mErr) return
       // reset both error layers so a retry can't show stale field + message errors together
@@ -378,6 +382,7 @@ export function openModal(title, fields, onSubmit) {
       else closeModal()
     } catch (e) {
       console.error("submit failed", e)
+      if (gen !== modalGen) return
       const mErr = modal.querySelector("#mErr")
       if (!mErr) return
       // paint something rather than nothing — covers network failure and unexpected bugs
@@ -390,6 +395,7 @@ export function openModal(title, fields, onSubmit) {
 }
 
 function closeModal() {
+  modalGen++
   const modal = $("modal")
   modal.classList.add("hidden")
   modal.innerHTML = ""
