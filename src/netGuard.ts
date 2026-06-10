@@ -23,6 +23,18 @@ function normalize(addr: string): string {
   return (mapped ? mapped[1] : addr).toLowerCase()
 }
 
+// Stricter gate for state-mutating chart writes (register/update/delete): only
+// loopback (127.0.0.0/8, ::1, IPv4-mapped). Registering a chart installs code
+// the daemon EXECUTES, so code-install is kept off the tailnet entirely — even
+// though the tailnet is trusted for read/trigger. Authoring happens on the host.
+export function isLoopbackAddr(addr: string | undefined | null): boolean {
+  if (!addr) return false
+  const ip = normalize(addr)
+  if (ip === "::1") return true
+  const v4 = ip.match(/^(\d{1,3})\.\d{1,3}\.\d{1,3}\.\d{1,3}$/)
+  return v4 ? Number(v4[1]) === 127 : false
+}
+
 export function isTrustedAddr(addr: string | undefined | null): boolean {
   if (!addr) return false
   const ip = normalize(addr)

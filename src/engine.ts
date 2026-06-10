@@ -71,6 +71,10 @@ export class Engine {
   private queue: Marble[] = []
   private inFlight = new Set<string>()
   private pendingSignals = new Map<string, NodeResult>()
+  // Set by stop() to quiesce the engine for a hot-reload: pump() stops launching
+  // new steps so currently-running steps can settle before the chart is swapped.
+  // resume() clears it again (a stopped engine that is re-resumed comes back).
+  private stopped = false
   private readonly cap: number
   private readonly maxSteps: number
 
@@ -99,10 +103,45 @@ export class Engine {
   }
 
   async resume(): Promise<void> {
+    this.stopped = false
     const all = await this.opts.store.all()
     for (const m of all) {
       if (m.status === "running" || m.status === "queued") this.enqueue(m)
     }
+  }
+
+  // Quiesce for a hot-reload: stop launching new steps and resolve once every
+  // in-flight step has settled (running === 0). Marbles are persisted at each
+  // step, so whatever was queued/running is re-hydrated by the replacement
+  // engine's resume() — disk is authoritative, nothing is lost. Idempotent.
+  //
+  // REJECTS if a step won't settle within timeoutMs (e.g. a node activity with
+  // no `timeout` configured that hangs). Bounding this is load-bearing: stop()
+  // runs inside the daemon's serialized mutation lock, so an unbounded wait would
+  // wedge ALL future chart mutations behind one hung chart. The caller revives
+  // the engine (resume) and surfaces the failure rather than blocking forever.
+  stop(timeoutMs = 30_000): Promise<void> {
+    this.stopped = true
+    return new Promise((resolve, reject) => {
+      let settled = false
+      const deadline = setTimeout(() => {
+        settled = true
+        reject(new Error(`engine quiesce timed out after ${timeoutMs}ms (a node step is still running)`))
+      }, timeoutMs)
+      ;(deadline as unknown as { unref?: () => void }).unref?.()
+      const check = () => {
+        if (settled) return
+        if (this.running === 0) {
+          settled = true
+          clearTimeout(deadline)
+          resolve()
+        } else {
+          const t = setTimeout(check, 5)
+          ;(t as unknown as { unref?: () => void }).unref?.() // don't hold the event loop open
+        }
+      }
+      check()
+    })
   }
 
   // Resume a blocked marble with an externally supplied result (e.g. an agent
@@ -163,6 +202,7 @@ export class Engine {
   }
 
   private pump(): void {
+    if (this.stopped) return // quiesced for hot-reload; leave queued work on disk
     while (this.running < this.cap && this.queue.length > 0) {
       const m = this.queue.shift()!
       this.running++

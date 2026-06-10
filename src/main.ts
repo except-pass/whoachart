@@ -21,8 +21,25 @@ async function resolveCharts(spec: string): Promise<string[]> {
   return out
 }
 
+// The writable chart store is a single directory. Use WHOACHART_CHARTS_DIR when
+// set; otherwise, if WHOACHART_CHARTS is a lone directory entry (the common
+// case), that directory IS the store. A multi-entry / explicit-file spec has no
+// single owning dir, so CRUD is disabled unless WHOACHART_CHARTS_DIR is given.
+function resolveChartsDir(spec: string): string | undefined {
+  if (process.env.WHOACHART_CHARTS_DIR) {
+    const d = process.env.WHOACHART_CHARTS_DIR
+    return isAbsolute(d) ? d : join(process.cwd(), d)
+  }
+  const entries = spec.split(",").map((s) => s.trim()).filter(Boolean)
+  if (entries.length !== 1) return undefined
+  const e = entries[0]
+  if (e.endsWith(".yaml") || e.endsWith(".yml")) return undefined
+  return isAbsolute(e) ? e : join(process.cwd(), e)
+}
+
 async function main(): Promise<void> {
   const chartsSpec = process.env.WHOACHART_CHARTS ?? "examples"
+  const chartsDir = resolveChartsDir(chartsSpec)
   const storeDir = process.env.WHOACHART_STORE ?? join(process.cwd(), ".whoachart")
   const port = process.env.WHOACHART_PORT ? Number(process.env.WHOACHART_PORT) : DEFAULT_PORT
   const tinstarUrl = process.env.TINSTAR_URL ?? "http://localhost:5273"
@@ -35,6 +52,7 @@ async function main(): Promise<void> {
   const client = new TinstarClient(tinstarUrl)
   const daemon = new Daemon({
     charts,
+    chartsDir,
     storeDir,
     client,
     launcher: client,
