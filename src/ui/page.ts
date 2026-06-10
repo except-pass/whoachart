@@ -27,7 +27,8 @@ svg{width:100%;height:100%;display:block}
   stroke-dasharray:6 5;animation:flow 1s linear infinite}
 @keyframes flow{to{stroke-dashoffset:-22}}
 .elabel{fill:#6c7c8b;font:10px monospace}
-.node{fill:var(--node);stroke-width:1.5}
+.node{fill:var(--node);stroke-width:1.5;cursor:pointer}
+.node.selected{stroke:var(--cyan);stroke-width:2.5;filter:drop-shadow(0 0 5px rgba(0,240,255,.45))}
 .nname{fill:var(--ink);font:600 12.5px system-ui;text-anchor:middle;pointer-events:none}
 .nsub{fill:var(--dim);font:9.5px monospace;text-anchor:middle;pointer-events:none}
 .endcount{fill:var(--cyan);font:600 11px monospace}
@@ -57,6 +58,9 @@ svg{width:100%;height:100%;display:block}
 .db{padding:12px;font-size:12px}
 .kv{display:flex;justify-content:space-between;gap:8px;padding:4.5px 0;border-bottom:1px dashed #18222d}
 .kv .k{color:var(--dim)}.kv .v{font:11px monospace;color:var(--ink);text-align:right;word-break:break-all}
+.kv.mrow{cursor:pointer}.kv.mrow:hover{background:#13202c}
+.mswatch{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.liveplaceholder{color:var(--dim);font:10.5px monospace}
 .crumb{font:10.5px monospace;color:var(--dim);line-height:1.9;margin:4px 0 10px}
 .crumb b{color:#9fb6c9}.crumb .now{color:var(--violet)}.crumb .t{color:#42525f}
 .crumb .step{cursor:pointer;border-radius:4px;padding:1px 2px}

@@ -81,6 +81,13 @@ export interface ChartDef {
     color?: string
     present?: PresentSpec[]
     stuck_after?: number
+    timeout?: number
+    retry?: { max: number }
+    // The node's run code + lifecycle hooks, surfaced for the node inspector.
+    // on_leave is the universal post-node shell hook; the type-specific code
+    // (shell/decision on_enter, agent brief, api request) lives in `config`.
+    on_leave?: string
+    config: Record<string, unknown>
     form?: FormField[]
   }[]
   edges: { from: string; to: string; name?: string; default?: boolean; form?: FormField[] }[]
@@ -187,6 +194,10 @@ export class Daemon {
         color: n.color,
         present: n.present,
         stuck_after: n.stuck_after,
+        timeout: n.timeout,
+        retry: n.retry,
+        on_leave: n.on_leave,
+        config: n.config,
         form: n.type === "source" ? ((n.config as Record<string, unknown>).form as FormField[] | undefined) : undefined,
       })),
       edges: rt.chart.edges.map((e) => ({ from: e.from, to: e.to, name: e.name, default: e.default, form: e.form })),

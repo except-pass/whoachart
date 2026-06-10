@@ -74,6 +74,60 @@ test("def exposes nodes, edges with forms, layout, and the source form", async (
   expect(def.layout.width).toBeGreaterThan(0)
 })
 
+// The node inspector needs each node's run code + config + lifecycle hooks.
+const CODECHART = `
+name: codey
+nodes:
+  - id: ingest
+    type: source
+    config: { trigger: api }
+  - id: build
+    type: shell
+    on_leave: "echo left build"
+    timeout: 5000
+    retry: { max: 2 }
+    config:
+      on_enter: "echo building $WC_MARBLE"
+  - id: review
+    type: agent
+    config:
+      brief: "Review the workpiece and decide."
+      keep_session: true
+  - id: ship
+    type: end
+    config: { outcome: success }
+edges:
+  - { from: ingest, to: build }
+  - { from: build, to: review }
+  - { from: review, to: ship, name: approve }
+`
+
+test("def exposes node config, lifecycle hooks, and the agent brief", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wc-dc-code-"))
+  await writeFile(join(dir, "codey.yaml"), CODECHART)
+  const d = new Daemon({
+    charts: [join(dir, "codey.yaml")],
+    storeDir: join(dir, "store"),
+    client: new FakeCanvas(),
+    launcher: new FakeLauncher(),
+  })
+  await d.start()
+  const def = d.def("codey")
+
+  const build = def.nodes.find((n) => n.id === "build")!
+  expect((build.config as any).on_enter).toBe("echo building $WC_MARBLE")
+  expect(build.on_leave).toBe("echo left build")
+  expect(build.timeout).toBe(5000)
+  expect(build.retry).toEqual({ max: 2 })
+
+  const review = def.nodes.find((n) => n.id === "review")!
+  expect((review.config as any).brief).toBe("Review the workpiece and decide.")
+  expect((review.config as any).keep_session).toBe(true)
+
+  // end + source config surfaces too (generic, not just code-bearing nodes)
+  expect((def.nodes.find((n) => n.id === "ship")!.config as any).outcome).toBe("success")
+})
+
 test("submit validates the source form", async () => {
   const { d } = await makeDaemon()
   await expect(d.submit("gatey", { context: {} })).rejects.toThrow(FormError)

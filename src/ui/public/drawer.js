@@ -14,11 +14,19 @@ export function selectedMarble() {
   return current
 }
 
-export function clearDrawer() {
+// Drop the marble selection WITHOUT touching the DOM. Used when switching to the
+// node inspector (which shares #drawerBody): the node view paints over the body,
+// so painting the placeholder here first would just flicker. clearDrawer() is
+// the painting variant, used at boot and when nothing is selected.
+export function deselectMarble() {
   current = null
   lastRender = ""
   stepSel = null
-  body().innerHTML = `<span style="color:var(--dim)">click a marble…</span>`
+}
+
+export function clearDrawer() {
+  deselectMarble()
+  body().innerHTML = `<span style="color:var(--dim)">click a node or marble…</span>`
 }
 
 function trailHtml(steps, sel) {

@@ -3,7 +3,8 @@
 // reloads — all updates are DOM reconciliation + rAF animation.
 import { hue, ringFor, fmtAge, fmtMs, ageSeconds, slotPos, counterPos, escHtml, isDangerEdge, oldestBlockedPerNode } from "./helpers.js"
 import { renderForm, readForm, showFieldErrors } from "./forms.js"
-import { showMarble, selectedMarble, clearDrawer } from "./drawer.js"
+import { showMarble, selectedMarble, clearDrawer, deselectMarble } from "./drawer.js"
+import { showNode, selectedNode, clearNodeDrawer } from "./nodeDrawer.js"
 
 const NS = "http://www.w3.org/2000/svg"
 const CHART = globalThis.WHOACHART.chart
@@ -15,6 +16,7 @@ const gEdges = $("edges"), gNodes = $("nodes"), gCounts = $("counts"), gMarbles 
 let DEF = null
 const BOX = {} // node id -> box
 const NODE = {} // node id -> def node
+const NODE_RECT = {} // node id -> <rect> (for selection highlight)
 const EDGE_PATH = new Map() // `${from}→${to}` -> path element
 const els = new Map() // marble id -> <g>
 const lastNode = new Map() // marble id -> node id (for travel detection)
@@ -121,7 +123,7 @@ function drawStatic() {
     const b = BOX[n.id]
     if (!b) continue
     const g = el("g", {}, gNodes)
-    el("rect", {
+    NODE_RECT[n.id] = el("rect", {
       class: "node", x: b.x, y: b.y, width: b.w, height: b.h, rx: 11,
       stroke: n.color ?? TYPE_COLOR[n.type] ?? "#2a3340",
     }, g)
@@ -132,6 +134,7 @@ function drawStatic() {
     g.addEventListener("mouseenter", (ev) => showHover(n.id, ev))
     g.addEventListener("mousemove", (ev) => moveHover(ev))
     g.addEventListener("mouseleave", hideHover)
+    g.addEventListener("click", () => openNodeDrawer(n.id))
 
     if (n.id === DEF.start && n.type === "source") {
       const add = el("g", { class: "addbtn" }, gNodes)
@@ -410,11 +413,26 @@ function openEdgeModal(marbleId, edge) {
   openModal(`${edge.name} — required input`, edge.form, (values) => API.signal(marbleId, { next: edge.name, merge: values }))
 }
 
-// ---------- drawer ----------
+// ---------- drawer (marble + node inspectors share #drawerBody) ----------
 
+// Marble and node selection are mutually exclusive: opening one clears the
+// other (without repainting the placeholder) so the poll loop only refreshes
+// the visible view and the two never fight over #drawerBody.
 function openDrawer(id) {
+  clearNodeDrawer()
+  highlightNode(null)
   const live = lastState.live.find((m) => m.id === id)
   void showMarble(id, live?.gate ?? null, API)
+}
+
+function openNodeDrawer(id) {
+  deselectMarble()
+  highlightNode(id)
+  showNode(id, DEF, lastState, { openMarble: openDrawer })
+}
+
+function highlightNode(id) {
+  for (const [nid, rect] of Object.entries(NODE_RECT)) rect.classList.toggle("selected", nid === id)
 }
 
 // ---------- poll loop ----------
@@ -462,6 +480,8 @@ async function tick() {
     const live = state.live.find((m) => m.id === sel)
     void showMarble(sel, live?.gate ?? null, API)
   }
+  const selN = selectedNode()
+  if (selN) showNode(selN, DEF, state, { openMarble: openDrawer })
 }
 
 // ---------- boot ----------

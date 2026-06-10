@@ -85,7 +85,7 @@ test("GET /ui/app.js serves javascript; traversal is blocked", async () => {
 })
 
 test("all client modules serve and the shell has the control-surface containers", async () => {
-  for (const mod of ["app.js", "helpers.js", "forms.js", "drawer.js"]) {
+  for (const mod of ["app.js", "helpers.js", "forms.js", "drawer.js", "nodeDrawer.js"]) {
     const res = await fetch(`${base}/ui/${mod}`)
     expect(res.status).toBe(200)
   }
