@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, writeFile, rename } from "node:fs/promises"
+import { mkdir, readdir, readFile, writeFile, rename, rm } from "node:fs/promises"
 import { join } from "node:path"
 import type { Marble } from "./types"
 
@@ -7,6 +7,12 @@ export class MarbleStore {
 
   async init(): Promise<void> {
     await mkdir(this.dir, { recursive: true })
+  }
+
+  // Delete this chart's entire run-state directory. Used by DELETE ?purge=true;
+  // without purge the daemon leaves these files on disk for post-mortem audit.
+  async purge(): Promise<void> {
+    await rm(this.dir, { recursive: true, force: true })
   }
 
   private path(id: string): string {

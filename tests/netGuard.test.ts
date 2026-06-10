@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { isTrustedAddr } from "../src/netGuard"
+import { isLoopbackAddr, isTrustedAddr } from "../src/netGuard"
 
 test("loopback is trusted", () => {
   expect(isTrustedAddr("127.0.0.1")).toBe(true)
@@ -32,4 +32,21 @@ test("missing or malformed address is rejected", () => {
   expect(isTrustedAddr(undefined)).toBe(false)
   expect(isTrustedAddr(null)).toBe(false)
   expect(isTrustedAddr("")).toBe(false)
+})
+
+test("isLoopbackAddr accepts only loopback (the chart-write gate)", () => {
+  expect(isLoopbackAddr("127.0.0.1")).toBe(true)
+  expect(isLoopbackAddr("127.5.6.7")).toBe(true)
+  expect(isLoopbackAddr("::1")).toBe(true)
+  expect(isLoopbackAddr("::ffff:127.0.0.1")).toBe(true)
+})
+
+test("isLoopbackAddr rejects the tailnet (trusted for reads, not for writes)", () => {
+  expect(isLoopbackAddr("100.108.201.76")).toBe(false) // infrapoc — trusted by isTrustedAddr
+  expect(isLoopbackAddr("100.64.0.0")).toBe(false)
+  expect(isLoopbackAddr("fd7a:115c:a1e0:ab12:3456:7890:abcd:ef01")).toBe(false)
+  expect(isLoopbackAddr("8.8.8.8")).toBe(false)
+  expect(isLoopbackAddr(undefined)).toBe(false)
+  expect(isLoopbackAddr(null)).toBe(false)
+  expect(isLoopbackAddr("")).toBe(false)
 })

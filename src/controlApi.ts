@@ -1,19 +1,42 @@
 import type { Daemon } from "./daemon"
+import { ChartError } from "./chartStore"
 import { FormError } from "./forms"
-import { isTrustedAddr } from "./netGuard"
+import { isLoopbackAddr, isTrustedAddr } from "./netGuard"
 import { renderPage } from "./ui/page"
 import { serveStatic } from "./ui/static"
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
+}
+
+// WRITE GATE — the single chokepoint every state-mutating chart route
+// (POST/PUT/DELETE /api/charts) passes through. Registering a chart installs
+// YAML the daemon will EXECUTE (shell/on_leave/agent), so writes are gated
+// STRICTER than reads/triggers: loopback only, never the tailnet. Authoring
+// happens on the host, so this costs nothing operationally and removes remote
+// code-install from the tailnet surface entirely. WHOACHART_TRUST_ALL=1 still
+// overrides (explicit open-posture opt-in). SEAM: to allow remote authoring
+// later, accept a write-scoped token here. Returns a Response to reject, else null.
+function writeGate(addr: string | undefined, trustAll: boolean): Response | null {
+  if (trustAll || isLoopbackAddr(addr)) return null
+  return new Response("forbidden: chart writes are loopback-only", { status: 403, headers: CORS })
+}
+
+export interface ControlApiOpts {
+  // Test seam: override how the peer address is read (defaults to the socket's
+  // requestIP). Lets tests simulate a tailnet peer without a real remote socket.
+  resolveAddr?: (req: Request, server: { requestIP: (r: Request) => { address: string } | null }) => string | undefined
 }
 
 // Minimal HTTP control plane for the daemon. Routes:
 //   GET  /ui/charts/:name                 (shell HTML page)
 //   GET  /ui/app.js                       (v0 JSON client)
-//   GET  /api/charts
+//   GET    /api/charts
+//   POST   /api/charts                    (register a new chart; raw YAML body)
+//   PUT    /api/charts/:name              (update + hot-reload; ?on_conflict=fail)
+//   DELETE /api/charts/:name              (remove; ?force=true ?purge=true)
 //   GET  /api/charts/:name/def            (chart topology + layout)
 //   GET  /api/charts/:name/state          (bounded live view aggregate; polled by the canvas page)
 //   GET  /api/charts/:name/nodes/:id/logs (live-output delta: ?since=<seq>&marble=<id>)
@@ -24,7 +47,7 @@ const CORS = {
 //   POST /api/charts/:name/marbles/:id/retry        (re-run a failed marble)
 //   POST /api/charts/:name/marbles/:id/focus-session (pan Tinstar canvas)
 // All responses send permissive CORS so the Tinstar-served canvas page can poll.
-export function createControlApi(daemon: Daemon, port: number) {
+export function createControlApi(daemon: Daemon, port: number, opts: ControlApiOpts = {}) {
   const json = (data: unknown, status = 200) =>
     Response.json(data, { status, headers: CORS })
 
@@ -32,11 +55,13 @@ export function createControlApi(daemon: Daemon, port: number) {
   // only answers loopback + Tailscale peers (see netGuard). WHOACHART_TRUST_ALL=1
   // opts back into the old open behavior on an already-trusted network.
   const trustAll = process.env.WHOACHART_TRUST_ALL === "1"
+  const resolveAddr = opts.resolveAddr ?? ((req, server) => server.requestIP(req)?.address)
 
   return Bun.serve({
     port,
     async fetch(req, server) {
-      if (!trustAll && !isTrustedAddr(server.requestIP(req)?.address)) {
+      const addr = resolveAddr(req, server)
+      if (!trustAll && !isTrustedAddr(addr)) {
         return new Response("forbidden", { status: 403, headers: CORS })
       }
 
@@ -66,8 +91,32 @@ export function createControlApi(daemon: Daemon, port: number) {
           return json({ charts: daemon.charts() })
         }
 
+        // POST /api/charts — register a new chart from a raw YAML request body.
+        if (req.method === "POST" && url.pathname === "/api/charts") {
+          const blocked = writeGate(addr, trustAll)
+          if (blocked) return blocked
+          return json(await daemon.registerChart(await req.text()), 201)
+        }
+
         if (p[0] === "api" && p[1] === "charts" && p[2] && p[3] === "def" && req.method === "GET") {
           return json(daemon.def(p[2]))
+        }
+
+        // PUT/DELETE /api/charts/:name — update (hot-reload) or remove a chart.
+        if (p[0] === "api" && p[1] === "charts" && p[2] && !p[3]) {
+          if (req.method === "PUT") {
+            const blocked = writeGate(addr, trustAll)
+            if (blocked) return blocked
+            const forceFail = url.searchParams.get("on_conflict") === "fail"
+            return json(await daemon.updateChart(p[2], await req.text(), { forceFail }))
+          }
+          if (req.method === "DELETE") {
+            const blocked = writeGate(addr, trustAll)
+            if (blocked) return blocked
+            const force = url.searchParams.get("force") === "true"
+            const purge = url.searchParams.get("purge") === "true"
+            return json(await daemon.deleteChart(p[2], { force, purge }))
+          }
         }
 
         if (p[0] === "api" && p[1] === "charts" && p[2] && p[3] === "state" && req.method === "GET") {
@@ -123,6 +172,9 @@ export function createControlApi(daemon: Daemon, port: number) {
         return json({ error: "not found" }, 404)
       } catch (err) {
         if (err instanceof FormError) return json({ error: "validation", fields: err.fields }, 400)
+        // ChartError carries its own HTTP status + optional detail (e.g. the
+        // marbles blocking a hot-reload). Everything else (parse/schema) → 400.
+        if (err instanceof ChartError) return json({ error: err.message, ...(err.detail ?? {}) }, err.status)
         return json({ error: String(err) }, 400)
       }
     },
