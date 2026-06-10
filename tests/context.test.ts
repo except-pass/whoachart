@@ -1,5 +1,8 @@
 // tests/context.test.ts
 import { test, expect } from "bun:test"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
+import { stat } from "node:fs/promises"
 import { parseEmit, runShell } from "../src/context"
 import type { Marble, ChartNode } from "../src/types"
 
@@ -33,4 +36,17 @@ test("runShell exposes context + ids via env", async () => {
   const out = await runShell(`cat "$WHOACHART_CONTEXT"; echo " node=$WHOACHART_NODE"`, marble(), node)
   expect(out.stdout).toContain("ctx")
   expect(out.stdout).toContain("node=a")
+})
+
+test("runShell kills the process when the signal aborts (no orphan side effects)", async () => {
+  const marker = join(tmpdir(), `whoachart-kill-${crypto.randomUUID().slice(0, 8)}`)
+  const ctrl = new AbortController()
+  // Abort shortly after spawn; the script would write the marker at 1s if it
+  // were allowed to keep running past the deadline.
+  setTimeout(() => ctrl.abort(), 50)
+  await runShell(`sleep 1 && touch "${marker}"`, marble(), node, ctrl.signal)
+
+  // Give the (killed) process well past its 1s sleep to prove it never ran on.
+  await new Promise((r) => setTimeout(r, 1200))
+  await expect(stat(marker)).rejects.toThrow() // marker absent → process was killed
 })

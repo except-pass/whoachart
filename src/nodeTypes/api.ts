@@ -23,6 +23,7 @@ export const apiNode: NodeType = {
       method: cfg.request.method,
       headers: cfg.request.headers,
       body: cfg.request.body,
+      signal: ctx.signal,
     })
     const text = await res.text()
     let data: unknown

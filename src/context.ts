@@ -39,7 +39,12 @@ export function parseEmit(stdout: string): { next?: string; merge?: Record<strin
   return {}
 }
 
-export async function runShell(script: string, marble: Marble, node: ChartNode): Promise<ActivityOutput> {
+export async function runShell(
+  script: string,
+  marble: Marble,
+  node: ChartNode,
+  signal?: AbortSignal,
+): Promise<ActivityOutput> {
   const ctxPath = join(tmpdir(), `whoachart-ctx-${marble.id}-${node.id}.json`)
   await writeFile(ctxPath, JSON.stringify(marble.context))
 
@@ -49,12 +54,22 @@ export async function runShell(script: string, marble: Marble, node: ChartNode):
       stdout: "pipe",
       stderr: "pipe",
     })
-    const stdout = await new Response(proc.stdout).text()
-    const stderr = await new Response(proc.stderr).text()
-    const exitCode = await proc.exited
+    // Kill the bash process when the node's timeout aborts the signal, so a
+    // timed-out activity can't keep running (and producing side effects).
+    const onAbort = () => proc.kill()
+    if (signal?.aborted) proc.kill()
+    else signal?.addEventListener("abort", onAbort, { once: true })
 
-    const { next, merge } = parseEmit(stdout)
-    return { exitCode, stdout, stderr, next, merge }
+    try {
+      const stdout = await new Response(proc.stdout).text()
+      const stderr = await new Response(proc.stderr).text()
+      const exitCode = await proc.exited
+
+      const { next, merge } = parseEmit(stdout)
+      return { exitCode, stdout, stderr, next, merge }
+    } finally {
+      signal?.removeEventListener("abort", onAbort)
+    }
   } finally {
     await unlink(ctxPath).catch(() => {})
   }

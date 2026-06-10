@@ -85,4 +85,7 @@ export interface RunCtx {
   marble: Marble
   node: ChartNode
   outgoing: ChartEdge[]
+  // Aborted when the node's `timeout` elapses, so activities can kill their
+  // underlying process / in-flight fetch instead of leaking it past the deadline.
+  signal?: AbortSignal
 }

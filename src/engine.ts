@@ -42,14 +42,21 @@ export function newMarble(
   }
 }
 
-async function withTimeout<T>(p: Promise<T>, ms?: number): Promise<T> {
-  if (!ms) return p
+// Run an activity with a deadline. On timeout we both reject AND abort the
+// signal, so the activity can kill its underlying process / fetch rather than
+// leaving it running while the engine routes the marble down the fail path.
+async function withTimeout<T>(run: (signal?: AbortSignal) => Promise<T>, ms?: number): Promise<T> {
+  if (!ms) return run()
+  const ctrl = new AbortController()
   let t: ReturnType<typeof setTimeout> | undefined
   const timer = new Promise<T>((_, rej) => {
-    t = setTimeout(() => rej(new Error("activity timeout")), ms)
+    t = setTimeout(() => {
+      ctrl.abort()
+      rej(new Error("activity timeout"))
+    }, ms)
   })
   try {
-    return await Promise.race([p, timer])
+    return await Promise.race([run(ctrl.signal), timer])
   } finally {
     if (t) clearTimeout(t)
   }
@@ -176,7 +183,7 @@ export class Engine {
     for (let attempt = 0; attempt <= max; attempt++) {
       try {
         const res = await withTimeout(
-          nt.run({ chart: this.opts.chart, marble: m, node, outgoing: this.outgoing(node.id) }),
+          (signal) => nt.run({ chart: this.opts.chart, marble: m, node, outgoing: this.outgoing(node.id), signal }),
           node.timeout,
         )
         if (res.failed && attempt < max) continue
