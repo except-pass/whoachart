@@ -1,0 +1,60 @@
+# examples/gate-demo.yaml
+# Human-in-the-loop demo: typed intake form, a human gate with presentation
+# and a decline form, and a deliberately broken node for retry demos.
+name: gate-demo
+nodes:
+  - id: ingest
+    type: source
+    name: New request
+    config:
+      trigger: api
+      form:
+        - { key: title, type: text, required: true }
+        - { key: priority, type: enum, options: [low, med, high], default: med }
+        - { key: rush, type: boolean, default: false }
+        - { key: notes, type: textarea }
+
+  - id: prep
+    type: shell
+    name: Prep
+    config:
+      on_enter: |
+        echo '{"merge":{"prepped":true}}'
+
+  - id: approve
+    type: human
+    name: Approve?
+    stuck_after: 120
+    present:
+      - { key: title, as: text }
+      - { key: priority, as: text }
+      - { key: notes, as: markdown }
+    config: {}
+
+  - id: breaker
+    type: shell
+    name: Breaker
+    config:
+      on_enter: |
+        echo "this node always fails" >&2
+        exit 7
+
+  - id: shipped
+    type: end
+    name: Shipped
+    config:
+      outcome: success
+
+  - id: declined
+    type: end
+    name: Declined
+    config:
+      outcome: fail
+
+edges:
+  - { from: ingest, to: prep }
+  - { from: prep, to: approve }
+  - { from: approve, to: shipped, name: approve }
+  - { from: approve, to: declined, name: decline,
+      form: [ { key: reason, type: textarea, required: true } ] }
+  - { from: breaker, to: shipped }
