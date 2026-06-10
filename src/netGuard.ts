@@ -5,9 +5,15 @@
 // WHOACHART_PUBLIC_URL). But this control plane executes shell scripts and
 // spawns agent sessions, so it must NOT answer arbitrary LAN/internet hosts.
 // We gate by peer address: only loopback and the Tailscale ranges are trusted.
-//   - loopback:        127.0.0.0/8, ::1 (and IPv4-mapped ::ffff:127.x)
-//   - Tailscale CGNAT: 100.64.0.0/10  (e.g. infrapoc = 100.108.201.76)
-//   - Tailscale ULA:   fd7a:115c:a1e0::/48
+//   - loopback:      127.0.0.0/8, ::1 (and IPv4-mapped ::ffff:127.x)
+//   - CGNAT:         100.64.0.0/10  (Tailscale's range — e.g. infrapoc = 100.108.201.76)
+//   - Tailscale ULA: fd7a:115c:a1e0::/48
+// Note 100.64.0.0/10 is the general RFC 6598 CGNAT block, not Tailscale-exclusive.
+// On a normal LAN that's moot (LAN/private ranges are rejected and only the
+// tailnet interface carries 100.x sources). But if THIS host itself sits behind
+// an upstream ISP/cellular CGNAT (Starlink, hotspot) with the port exposed on
+// that interface, a non-tailnet 100.64–127.x peer would be trusted; scope trust
+// to the tailscale0 interface if you need stricter isolation there.
 // Set WHOACHART_TRUST_ALL=1 to restore the old open behavior on a network you
 // already trust (e.g. behind a separate firewall).
 
