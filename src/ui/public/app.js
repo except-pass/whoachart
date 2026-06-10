@@ -1,10 +1,12 @@
 // whoachart control surface client. Draws the chart from /def, polls /state,
 // and renders marbles that travel along the edge curves. The page never
 // reloads — all updates are DOM reconciliation + rAF animation.
-import { hue, ringFor, fmtAge, fmtMs, ageSeconds, slotPos, counterPos, escHtml, isDangerEdge, oldestBlockedPerNode, shapeForType } from "./helpers.js"
+import { hue, ringFor, fmtAge, fmtMs, ageSeconds, slotPos, counterPos, escHtml, isDangerEdge, oldestBlockedPerNode, shapeForType, diamondHalfWidth, fitLabel } from "./helpers.js"
 import { renderForm, readForm, showFieldErrors } from "./forms.js"
 import { showMarble, selectedMarble, clearDrawer, deselectMarble } from "./drawer.js"
 import { showNode, selectedNode, clearNodeDrawer } from "./nodeDrawer.js"
+import { initLegend } from "./legend.js"
+import { initViewport } from "./viewport.js"
 
 const NS = "http://www.w3.org/2000/svg"
 const CHART = globalThis.WHOACHART.chart
@@ -157,10 +159,16 @@ function drawStatic() {
     const shape = nodeShape(b, n.type, n.color ?? TYPE_COLOR[n.type] ?? "#2a3340")
     g.appendChild(shape)
     NODE_SHAPE[n.id] = shape
+    // Diamonds taper away from their centerline, so a label sized to the box
+    // overflows the slanted edges. Truncate both labels to the width actually
+    // available at their y-offset (name ~12.5px system-ui, sub ~9.5px mono).
+    const diamond = shapeForType(n.type) === "diamond"
+    const nameText = n.name ?? n.id
+    const subText = n.type
     const name = el("text", { class: "nname", x: b.x + b.w / 2, y: b.y + b.h / 2 - 1 }, g)
-    name.textContent = n.name ?? n.id
+    name.textContent = diamond ? fitLabel(nameText, 2 * diamondHalfWidth(b.w, b.h, 1), 6.8) : nameText
     const sub = el("text", { class: "nsub", x: b.x + b.w / 2, y: b.y + b.h / 2 + 14 }, g)
-    sub.textContent = n.type
+    sub.textContent = diamond ? fitLabel(subText, 2 * diamondHalfWidth(b.w, b.h, 14), 5.8) : subText
     g.addEventListener("mouseenter", (ev) => showHover(n.id, ev))
     g.addEventListener("mousemove", (ev) => moveHover(ev))
     g.addEventListener("mouseleave", hideHover)
@@ -532,6 +540,10 @@ async function boot() {
     return
   }
   drawStatic()
+  // 2b overlays: shape legend + zoom/pan/minimap. Both inject their own DOM and
+  // styles into #canvas and drive the existing svg viewBox — no shell changes.
+  initLegend($("canvas"), DEF)
+  initViewport($("svg"), $("canvas"), DEF)
   clearNodeDrawer() // reset both selections to "nothing selected" (clearDrawer only handles the marble side)
   clearDrawer()
   setInterval(tickAges, 1000)
