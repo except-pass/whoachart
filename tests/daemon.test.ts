@@ -3,15 +3,9 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { writeFile, mkdtemp } from "node:fs/promises"
 import { Daemon } from "../src/daemon"
-import type { ArtifactRef, ArtifactPlacement, ArtifactSink } from "../src/tinstar"
 import { clearRegistry } from "../src/registry"
 import { registerBuiltins } from "../src/nodeTypes"
-
-class FakeSink implements ArtifactSink {
-  async postArtifact(_h: string, _p?: ArtifactPlacement): Promise<ArtifactRef> { return { artifactId: "a", widgetId: "w" } }
-  async putArtifact(): Promise<boolean> { return true }
-  async deleteArtifact(): Promise<void> {}
-}
+import { FakeCanvas } from "./fakes"
 
 const CHART = `
 name: demo
@@ -40,13 +34,13 @@ async function chartFile(): Promise<string> {
 }
 
 test("loads charts and lists them", async () => {
-  const d = new Daemon({ charts: [await chartFile()], storeDir: join(tmpdir(), "wc-st-" + crypto.randomUUID().slice(0, 8)), client: new FakeSink() })
+  const d = new Daemon({ charts: [await chartFile()], storeDir: join(tmpdir(), "wc-st-" + crypto.randomUUID().slice(0, 8)), client: new FakeCanvas() })
   await d.start()
   expect(d.charts()).toEqual(["demo"])
 })
 
 test("submit runs a marble to completion (default start = source node)", async () => {
-  const d = new Daemon({ charts: [await chartFile()], storeDir: join(tmpdir(), "wc-st-" + crypto.randomUUID().slice(0, 8)), client: new FakeSink() })
+  const d = new Daemon({ charts: [await chartFile()], storeDir: join(tmpdir(), "wc-st-" + crypto.randomUUID().slice(0, 8)), client: new FakeCanvas() })
   await d.start()
   const m = await d.submit("demo", { context: { hi: 1 } })
   await new Promise((r) => setTimeout(r, 200))
@@ -56,7 +50,7 @@ test("submit runs a marble to completion (default start = source node)", async (
 })
 
 test("submit on an unknown chart throws", async () => {
-  const d = new Daemon({ charts: [await chartFile()], storeDir: join(tmpdir(), "wc-st-" + crypto.randomUUID().slice(0, 8)), client: new FakeSink() })
+  const d = new Daemon({ charts: [await chartFile()], storeDir: join(tmpdir(), "wc-st-" + crypto.randomUUID().slice(0, 8)), client: new FakeCanvas() })
   await d.start()
   await expect(d.submit("nope", {})).rejects.toThrow(/unknown chart/)
 })

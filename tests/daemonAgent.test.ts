@@ -3,20 +3,8 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { writeFile, mkdtemp } from "node:fs/promises"
 import { Daemon } from "../src/daemon"
-import type { ArtifactRef, ArtifactPlacement, ArtifactSink, SessionLauncher, SpawnSessionOpts } from "../src/tinstar"
 import { clearRegistry } from "../src/registry"
-
-class FakeSink implements ArtifactSink {
-  async postArtifact(_h: string, _p?: ArtifactPlacement): Promise<ArtifactRef> { return { artifactId: "a", widgetId: "w" } }
-  async putArtifact(): Promise<boolean> { return true }
-  async deleteArtifact(): Promise<void> {}
-}
-class FakeLauncher implements SessionLauncher {
-  spawned: SpawnSessionOpts[] = []
-  stopped: string[] = []
-  async spawnSession(o: SpawnSessionOpts) { this.spawned.push(o); return { name: o.name } }
-  async stopSession(n: string) { this.stopped.push(n) }
-}
+import { FakeCanvas, FakeLauncher } from "./fakes"
 
 const CHART = `
 name: agency
@@ -49,7 +37,7 @@ async function makeDaemon(launcher: FakeLauncher) {
   const d = new Daemon({
     charts: [path],
     storeDir: join(dir, "store"),
-    client: new FakeSink(),
+    client: new FakeCanvas(),
     launcher,
     baseUrl: "http://localhost:5330",
   })

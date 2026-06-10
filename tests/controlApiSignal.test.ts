@@ -4,18 +4,8 @@ import { tmpdir } from "node:os"
 import { writeFile, mkdtemp } from "node:fs/promises"
 import { Daemon } from "../src/daemon"
 import { createControlApi } from "../src/controlApi"
-import type { ArtifactRef, ArtifactPlacement, ArtifactSink, SessionLauncher, SpawnSessionOpts } from "../src/tinstar"
 import { clearRegistry } from "../src/registry"
-
-class FakeSink implements ArtifactSink {
-  async postArtifact(_h: string, _p?: ArtifactPlacement): Promise<ArtifactRef> { return { artifactId: "a", widgetId: "w" } }
-  async putArtifact(): Promise<boolean> { return true }
-  async deleteArtifact(): Promise<void> {}
-}
-class FakeLauncher implements SessionLauncher {
-  async spawnSession(o: SpawnSessionOpts) { return { name: o.name } }
-  async stopSession(_n: string) {}
-}
+import { FakeCanvas, FakeLauncher } from "./fakes"
 
 const CHART = `
 name: agency
@@ -42,7 +32,7 @@ beforeEach(async () => {
   const dir = await mkdtemp(join(tmpdir(), "wc-sigapi-"))
   const path = join(dir, "agency.yaml")
   await writeFile(path, CHART)
-  const daemon = new Daemon({ charts: [path], storeDir: join(dir, "store"), client: new FakeSink(), launcher: new FakeLauncher() })
+  const daemon = new Daemon({ charts: [path], storeDir: join(dir, "store"), client: new FakeCanvas(), launcher: new FakeLauncher() })
   await daemon.start()
   server = createControlApi(daemon, 0)
   base = `http://localhost:${server.port}`

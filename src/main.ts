@@ -26,6 +26,10 @@ async function main(): Promise<void> {
   const storeDir = process.env.WHOACHART_STORE ?? join(process.cwd(), ".whoachart")
   const port = process.env.WHOACHART_PORT ? Number(process.env.WHOACHART_PORT) : DEFAULT_PORT
   const tinstarUrl = process.env.TINSTAR_URL ?? "http://localhost:5273"
+  // The URL browsers use to reach this daemon. On a tailnet box set e.g.
+  // WHOACHART_PUBLIC_URL=http://infrapoc.taile890bc.ts.net:5331 — Bun.serve
+  // binds 0.0.0.0 by default, so no port forwarding is needed.
+  const publicUrl = process.env.WHOACHART_PUBLIC_URL ?? `http://localhost:${port}`
 
   const charts = await resolveCharts(chartsSpec)
   const client = new TinstarClient(tinstarUrl)
@@ -35,10 +39,12 @@ async function main(): Promise<void> {
     client,
     launcher: client,
     baseUrl: `http://localhost:${port}`,
+    publicUrl,
   })
   await daemon.start()
   createControlApi(daemon, port)
   console.log(`[whoachart] daemon up on :${port} — charts: ${daemon.charts().join(", ") || "(none)"}`)
+  for (const name of daemon.charts()) console.log(`[whoachart]   ui: ${publicUrl}/ui/charts/${name}`)
 }
 
 if (import.meta.main) {

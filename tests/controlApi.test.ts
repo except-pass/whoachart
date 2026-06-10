@@ -4,15 +4,9 @@ import { tmpdir } from "node:os"
 import { writeFile, mkdtemp } from "node:fs/promises"
 import { Daemon } from "../src/daemon"
 import { createControlApi } from "../src/controlApi"
-import type { ArtifactRef, ArtifactPlacement, ArtifactSink } from "../src/tinstar"
 import { clearRegistry } from "../src/registry"
 import { registerBuiltins } from "../src/nodeTypes"
-
-class FakeSink implements ArtifactSink {
-  async postArtifact(_h: string, _p?: ArtifactPlacement): Promise<ArtifactRef> { return { artifactId: "a", widgetId: "w" } }
-  async putArtifact(): Promise<boolean> { return true }
-  async deleteArtifact(): Promise<void> {}
-}
+import { FakeCanvas } from "./fakes"
 
 const CHART = `
 name: demo
@@ -36,7 +30,7 @@ beforeEach(async () => {
   const dir = await mkdtemp(join(tmpdir(), "wc-api-"))
   const path = join(dir, "demo.yaml")
   await writeFile(path, CHART)
-  daemon = new Daemon({ charts: [path], storeDir: join(dir, "store"), client: new FakeSink() })
+  daemon = new Daemon({ charts: [path], storeDir: join(dir, "store"), client: new FakeCanvas() })
   await daemon.start()
   server = createControlApi(daemon, 0)
   base = `http://localhost:${server.port}`

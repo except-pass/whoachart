@@ -3,14 +3,9 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { Daemon } from "../src/daemon"
 import { createControlApi } from "../src/controlApi"
-import type { ArtifactRef, ArtifactPlacement, ArtifactSink, SessionLauncher, SpawnSessionOpts } from "../src/tinstar"
+import type { SessionLauncher, SpawnSessionOpts } from "../src/tinstar"
 import { clearRegistry } from "../src/registry"
-
-class FakeSink implements ArtifactSink {
-  async postArtifact(_h: string, _p?: ArtifactPlacement): Promise<ArtifactRef> { return { artifactId: "a", widgetId: "w" } }
-  async putArtifact(): Promise<boolean> { return true }
-  async deleteArtifact(): Promise<void> {}
-}
+import { FakeCanvas } from "./fakes"
 
 // A launcher that behaves like a real agent: reads the signal URL out of its
 // brief and (after a beat) signals 'approve' through the control API — the
@@ -41,7 +36,7 @@ test("agent-review example: marble blocks, fake agent signals, marble ships, ses
   const daemon = new Daemon({
     charts: ["examples/agent-review.yaml"],
     storeDir,
-    client: new FakeSink(),
+    client: new FakeCanvas(),
     launcher,
     baseUrl: "http://localhost:0", // patched below once the server binds
   })
