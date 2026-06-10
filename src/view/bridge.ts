@@ -9,7 +9,7 @@ import { ViewState, type ViewSnapshot } from "./viewState"
 // endpoint (served from this.snapshot()) and animates marbles itself — so the
 // artifact is never replaced (no flashing) and the payload stays bounded.
 export class ViewBridge {
-  private state = new ViewState()
+  private state: ViewState
   private layout: Layout
   private artifactId?: string
 
@@ -19,6 +19,7 @@ export class ViewBridge {
     private stateUrl: string,
     private placement: ArtifactPlacement = {},
   ) {
+    this.state = new ViewState(chart)
     this.layout = layoutChart(chart)
   }
 

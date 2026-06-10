@@ -1,48 +1,100 @@
 import { test, expect } from "bun:test"
 import { ViewState } from "../src/view/viewState"
-import type { Marble } from "../src/types"
+import type { Chart, Marble } from "../src/types"
 
-function marble(id: string, node: string, status: Marble["status"]): Marble {
-  return { id, chart: "c", node, context: {}, history: [node], status, createdAt: "t", updatedAt: "t" }
+const chart: Chart = {
+  name: "c",
+  nodes: [
+    { id: "work", type: "shell", config: {} },
+    { id: "gate", type: "human", stuck_after: 60, present: [{ key: "title", as: "text" }], config: {} },
+    { id: "agentstep", type: "agent", config: {} },
+    { id: "done", type: "end", config: {} },
+  ],
+  edges: [
+    { from: "work", to: "gate" },
+    { from: "gate", to: "done", name: "ok", form: [{ key: "note", type: "textarea", required: true }] },
+    { from: "gate", to: "work", name: "redo" },
+    { from: "agentstep", to: "done", name: "ship" },
+  ],
 }
 
-test("live marble shows in live, not ends", () => {
-  const v = new ViewState()
+function marble(id: string, node: string, status: Marble["status"], extra: Partial<Marble> = {}): Marble {
+  return {
+    id, chart: "c", node, context: {}, history: [node],
+    trail: [{ node, enteredAt: "2026-06-10T00:00:00.000Z" }],
+    status, createdAt: "t", updatedAt: "u", ...extra,
+  }
+}
+
+test("live marbles carry enteredAt from the trail", () => {
+  const v = new ViewState(chart)
   v.apply(marble("m1", "work", "running"))
-  const s = v.snapshot()
-  expect(s.live.map((m) => m.id)).toEqual(["m1"])
-  expect(Object.keys(s.ends)).toHaveLength(0)
+  expect(v.snapshot().live[0].enteredAt).toBe("2026-06-10T00:00:00.000Z")
 })
 
-test("a marble moving then finishing leaves live and tallies at the end node", () => {
-  const v = new ViewState()
-  v.apply(marble("m1", "work", "running"))
-  v.apply(marble("m1", "done", "done")) // same id, now terminal at node 'done'
-  const s = v.snapshot()
-  expect(s.live).toHaveLength(0)
-  expect(s.ends["done"].total).toBe(1)
-  expect(s.ends["done"].recent[0]).toEqual({ id: "m1", status: "done" })
+test("blocked marble at a human node exposes gate info", () => {
+  const v = new ViewState(chart)
+  v.apply(marble("m1", "gate", "blocked"))
+  const gate = v.snapshot().live[0].gate!
+  expect(gate.agent).toBe(false)
+  expect(gate.edges.map((e) => e.name)).toEqual(["ok", "redo"])
+  expect(gate.edges[0].form![0].key).toBe("note")
+  expect(gate.present![0].key).toBe("title")
 })
 
-test("failed marbles tally with their status", () => {
-  const v = new ViewState()
-  v.apply(marble("m1", "halt", "failed"))
-  expect(v.snapshot().ends["halt"].recent[0].status).toBe("failed")
+test("blocked marble at an agent node is flagged agent", () => {
+  const v = new ViewState(chart)
+  v.apply(marble("m1", "agentstep", "blocked"))
+  expect(v.snapshot().live[0].gate!.agent).toBe(true)
 })
 
-test("only the last N completed are kept as dots, but total keeps counting", () => {
-  const v = new ViewState(3) // N=3
+test("closed trail hops feed dwell stats exactly once", () => {
+  const v = new ViewState(chart)
+  const trail = [
+    { node: "work", enteredAt: "2026-06-10T00:00:00.000Z", leftAt: "2026-06-10T00:00:01.000Z" },
+    { node: "gate", enteredAt: "2026-06-10T00:00:01.000Z" },
+  ]
+  v.apply(marble("m1", "gate", "blocked", { trail }))
+  v.apply(marble("m1", "gate", "blocked", { trail })) // re-apply: no double count
+  const s = v.snapshot().stats
+  expect(s.work.runs).toBe(1)
+  expect(s.work.dwellP50).toBe(1000)
+  expect(s.work.dwellP95).toBe(1000)
+})
+
+test("errored marbles go to deadLetter (first line), not the end tally", () => {
+  const v = new ViewState(chart)
+  v.apply(marble("m1", "work", "failed", { error: "exit 7: boom\nstack stack" }))
+  const snap = v.snapshot()
+  expect(snap.deadLetter).toEqual([{ id: "m1", node: "work", error: "exit 7: boom", failedAt: "u" }])
+  expect(Object.keys(snap.ends)).toHaveLength(0)
+  expect(snap.stats.work.fails).toBe(1)
+})
+
+test("a retried marble leaves the dead letter tray", () => {
+  const v = new ViewState(chart)
+  v.apply(marble("m1", "work", "failed", { error: "boom" }))
+  v.apply(marble("m1", "work", "queued"))
+  expect(v.snapshot().deadLetter).toHaveLength(0)
+})
+
+test("outcome-fail at an end node tallies normally (no error => not a dead letter)", () => {
+  const v = new ViewState(chart)
+  v.apply(marble("m1", "done", "failed"))
+  expect(v.snapshot().ends.done.total).toBe(1)
+  expect(v.snapshot().deadLetter).toHaveLength(0)
+})
+
+test("dead letter tray is bounded to 20", () => {
+  const v = new ViewState(chart)
+  for (let i = 0; i < 25; i++) v.apply(marble(`m${i}`, "work", "failed", { error: "x" }))
+  expect(v.snapshot().deadLetter).toHaveLength(20)
+})
+
+test("recent dots stay bounded while totals keep counting", () => {
+  const v = new ViewState(chart, 3)
   for (let i = 0; i < 10; i++) v.apply(marble(`m${i}`, "done", "done"))
-  const tally = v.snapshot().ends["done"]
-  expect(tally.total).toBe(10)
-  expect(tally.recent).toHaveLength(3)
-  expect(tally.recent.map((r) => r.id)).toEqual(["m7", "m8", "m9"]) // most recent
-})
-
-test("seed aggregates a batch of marbles", () => {
-  const v = new ViewState()
-  v.seed([marble("a", "work", "running"), marble("b", "done", "done"), marble("c", "done", "done")])
-  const s = v.snapshot()
-  expect(s.live).toHaveLength(1)
-  expect(s.ends["done"].total).toBe(2)
+  const t = v.snapshot().ends.done
+  expect(t.total).toBe(10)
+  expect(t.recent.map((r) => r.id)).toEqual(["m7", "m8", "m9"])
 })
