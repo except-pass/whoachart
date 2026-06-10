@@ -65,9 +65,11 @@ test("GET /ui/charts/:name serves the shell html", async () => {
 })
 
 test("GET /ui/charts/:name/ (trailing slash) redirects to the slashless form", async () => {
-  const res = await fetch(`${base}/ui/charts/gatey/`, { redirect: "manual" })
+  const res = await fetch(`${base}/ui/charts/gatey/?foo=bar`, { redirect: "manual" })
   expect(res.status).toBe(301)
-  expect(res.headers.get("location")).toBe("/ui/charts/gatey")
+  const location = new URL(res.headers.get("location")!)
+  expect(location.pathname).toBe("/ui/charts/gatey")
+  expect(location.search).toBe("?foo=bar")
 })
 
 test("GET /ui/charts/unknown is 404", async () => {
