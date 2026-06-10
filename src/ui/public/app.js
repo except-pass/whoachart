@@ -273,7 +273,7 @@ function drawGateButtons(live) {
       el("rect", { x: b.x + b.w + 8, y, width: 96, height: 20 }, g)
       const t = el("text", { x: b.x + b.w + 56, y: y + 14 }, g)
       const name = edge.name.length > 9 ? edge.name.slice(0, 8) + "…" : edge.name
-      t.textContent = `${name} · ${m.id.slice(0, 2)}`
+      t.textContent = `${name} · ${m.id.slice(0, 4)}`
       el("title", {}, g).textContent = `${edge.name} → ${m.id}` // full name + id (label truncates both)
       g.addEventListener("click", () => {
         if (edge.form && edge.form.length > 0) openEdgeModal(m.id, edge)

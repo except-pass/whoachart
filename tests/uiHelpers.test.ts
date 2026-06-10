@@ -19,6 +19,19 @@ test("oldestBlockedPerNode picks the FIFO marble per node, skipping agents and n
   expect(byNode.get("a").id).toBe("m2")
 })
 
+test("oldestBlockedPerNode keeps one marble per node and breaks ties by first seen", () => {
+  const gate = { edges: [{ name: "ok" }] }
+  const live = [
+    { id: "a1", node: "a", status: "blocked", gate, enteredAt: "2026-06-10T00:00:00Z" },
+    { id: "a2", node: "a", status: "blocked", gate, enteredAt: "2026-06-10T00:00:00Z" },
+    { id: "b1", node: "b", status: "blocked", gate, enteredAt: "2026-06-10T00:05:00Z" },
+  ]
+  const byNode = oldestBlockedPerNode(live)
+  expect([...byNode.keys()].sort()).toEqual(["a", "b"])
+  expect(byNode.get("a").id).toBe("a1") // tie → first seen wins
+  expect(byNode.get("b").id).toBe("b1")
+})
+
 test("isDangerEdge matches whole words only", () => {
   expect(isDangerEdge("reject")).toBe(true)
   expect(isDangerEdge("decline politely")).toBe(true)
