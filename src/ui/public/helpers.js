@@ -12,6 +12,15 @@ export function hue(id) {
   return `hsl(${((h >>> 0) * 137) % 360} 72% 62%)`
 }
 
+// Flowchart shape for a node type. ONE place maps type → shape so the canvas
+// and the legend (task 2b) stay in sync: source/end read as terminals (stadium
+// pill), decision as a branch (diamond), everything else as a step (rect).
+export function shapeForType(type) {
+  if (type === "source" || type === "end") return "stadium"
+  if (type === "decision") return "diamond"
+  return "rect"
+}
+
 // Status lives on the ring (fill encodes identity): red=failed, bright=working.
 export function ringFor(status) {
   if (status === "failed") return ["#ef4444", 2.5]

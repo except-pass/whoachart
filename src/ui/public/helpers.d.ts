@@ -1,5 +1,6 @@
 // Type declarations for the plain-ESM client helpers (unit-tested from bun).
 export function hue(id: string): string
+export function shapeForType(type: string): "stadium" | "diamond" | "rect"
 export function ringFor(status: string): [string, number]
 export function fmtAge(sec: number): string
 export function fmtMs(ms: number): string

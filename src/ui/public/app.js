@@ -1,7 +1,7 @@
 // whoachart control surface client. Draws the chart from /def, polls /state,
 // and renders marbles that travel along the edge curves. The page never
 // reloads — all updates are DOM reconciliation + rAF animation.
-import { hue, ringFor, fmtAge, fmtMs, ageSeconds, slotPos, counterPos, escHtml, isDangerEdge, oldestBlockedPerNode } from "./helpers.js"
+import { hue, ringFor, fmtAge, fmtMs, ageSeconds, slotPos, counterPos, escHtml, isDangerEdge, oldestBlockedPerNode, shapeForType } from "./helpers.js"
 import { renderForm, readForm, showFieldErrors } from "./forms.js"
 import { showMarble, selectedMarble, clearDrawer, deselectMarble } from "./drawer.js"
 import { showNode, selectedNode, clearNodeDrawer } from "./nodeDrawer.js"
@@ -16,7 +16,7 @@ const gEdges = $("edges"), gNodes = $("nodes"), gCounts = $("counts"), gMarbles 
 let DEF = null
 const BOX = {} // node id -> box
 const NODE = {} // node id -> def node
-const NODE_RECT = {} // node id -> <rect> (for selection highlight)
+const NODE_SHAPE = {} // node id -> shape element (rect/polygon, for selection highlight)
 const EDGE_PATH = new Map() // `${from}→${to}` -> path element
 const els = new Map() // marble id -> <g>
 const lastNode = new Map() // marble id -> node id (for travel detection)
@@ -108,6 +108,29 @@ const TYPE_COLOR = {
   human: "#5a4a86", agent: "#a78bfa", end: "#2f6f63",
 }
 
+// Build the node's outline element, shaped by type but always filling the full
+// layout box. Because every shape spans the box edge-to-edge, the rest of the
+// canvas geometry is shape-agnostic: edges still anchor at top/bottom-center
+// (which for a diamond ARE its top/bottom vertices — so edges meet the points,
+// not a corner), marble slots + the ×N counter sit under the box, and the whole
+// visible shape is the click target. Returns a detached element for the caller
+// to append.
+function nodeShape(box, type, stroke) {
+  const { x, y, w, h } = box
+  const shape = shapeForType(type)
+  if (shape === "diamond") {
+    const cx = x + w / 2, cy = y + h / 2
+    // vertices at the side midpoints: top/bottom land on the box's vertical
+    // centerline (edge anchors), left/right give the branch silhouette.
+    const pts = `${cx},${y} ${x + w},${cy} ${cx},${y + h} ${x},${cy}`
+    return el("polygon", { class: "node", points: pts, stroke })
+  }
+  // stadium (source/end terminals) = fully-rounded capsule; everything else
+  // keeps the gently-rounded step rect.
+  const rx = shape === "stadium" ? h / 2 : 11
+  return el("rect", { class: "node", x, y, width: w, height: h, rx, stroke })
+}
+
 function drawStatic() {
   $("svg").setAttribute("viewBox", `0 0 ${DEF.layout.width} ${DEF.layout.height}`)
   for (const n of DEF.nodes) { BOX[n.id] = DEF.layout.boxes[n.id]; NODE[n.id] = n }
@@ -131,10 +154,9 @@ function drawStatic() {
     const b = BOX[n.id]
     if (!b) continue
     const g = el("g", {}, gNodes)
-    NODE_RECT[n.id] = el("rect", {
-      class: "node", x: b.x, y: b.y, width: b.w, height: b.h, rx: 11,
-      stroke: n.color ?? TYPE_COLOR[n.type] ?? "#2a3340",
-    }, g)
+    const shape = nodeShape(b, n.type, n.color ?? TYPE_COLOR[n.type] ?? "#2a3340")
+    g.appendChild(shape)
+    NODE_SHAPE[n.id] = shape
     const name = el("text", { class: "nname", x: b.x + b.w / 2, y: b.y + b.h / 2 - 1 }, g)
     name.textContent = n.name ?? n.id
     const sub = el("text", { class: "nsub", x: b.x + b.w / 2, y: b.y + b.h / 2 + 14 }, g)
@@ -440,7 +462,7 @@ function openNodeDrawer(id) {
 }
 
 function highlightNode(id) {
-  for (const [nid, rect] of Object.entries(NODE_RECT)) rect.classList.toggle("selected", nid === id)
+  for (const [nid, shape] of Object.entries(NODE_SHAPE)) shape.classList.toggle("selected", nid === id)
 }
 
 // ---------- poll loop ----------

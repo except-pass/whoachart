@@ -2,8 +2,19 @@ import { test, expect } from "bun:test"
 // helpers.js is plain ESM — bun imports it directly
 import {
   hue, ringFor, fmtAge, fmtMs, ageSeconds, slotPos, counterPos, enumWidget, escHtml, isDangerEdge,
-  oldestBlockedPerNode,
+  oldestBlockedPerNode, shapeForType,
 } from "../src/ui/public/helpers.js"
+
+test("shapeForType maps terminals to stadium, decision to diamond, rest to rect", () => {
+  expect(shapeForType("source")).toBe("stadium")
+  expect(shapeForType("end")).toBe("stadium")
+  expect(shapeForType("decision")).toBe("diamond")
+  expect(shapeForType("shell")).toBe("rect")
+  expect(shapeForType("agent")).toBe("rect")
+  expect(shapeForType("api")).toBe("rect")
+  expect(shapeForType("human")).toBe("rect")
+  expect(shapeForType("anything-unknown")).toBe("rect") // unknown types stay a plain step
+})
 
 test("oldestBlockedPerNode picks the FIFO marble per node, skipping agents and non-blocked", () => {
   const gate = { edges: [{ name: "ok" }] }
