@@ -2,7 +2,7 @@ import { readFile, unlink } from "node:fs/promises"
 import { join } from "node:path"
 import { parseChart } from "./schema"
 import { ChartStore, ChartError, assertSafeChartName, atomicWrite } from "./chartStore"
-import { lintChart } from "./lint"
+import { lintChart, type LintWarning } from "./lint"
 import { registerBuiltins } from "./nodeTypes"
 import { agentSchemaNode, makeAgentNode } from "./nodeTypes/agent"
 import { hasNodeType, registerNodeType, type NodeType } from "./registry"
@@ -122,6 +122,10 @@ export interface ChartDef {
   }[]
   edges: { from: string; to: string; name?: string; default?: boolean; form?: FormField[] }[]
   layout: { boxes: Record<string, NodeBox>; width: number; height: number }
+  // Advisory static-analysis findings for the live chart, computed at request
+  // time so a hot-reload (3a) re-lints. Separate top-level key — NOT folded into
+  // nodes/edges — so the canvas (2b) and other /def consumers are undisturbed.
+  lint: LintWarning[]
 }
 
 // Key names whose VALUES are masked before a node's config is shipped to the
@@ -268,7 +272,7 @@ export class Daemon {
 
   // Register a brand-new chart from YAML and bring it live (hot, no restart).
   // Rejects 409 if the name already exists. Serialized via mutate().
-  async registerChart(yamlText: string): Promise<{ name: string; warnings: string[] }> {
+  async registerChart(yamlText: string): Promise<{ name: string; warnings: LintWarning[] }> {
     if (!this.chartStore) throw new ChartError("chart store not configured (set WHOACHART_CHARTS_DIR)", 501)
     return this.mutate(async () => {
       const chart = parseChart(yamlText) // schema/config errors → 400 (controlApi)
@@ -276,7 +280,7 @@ export class Daemon {
       if (this.runtimes.has(chart.name) || (await this.chartStore!.exists(chart.name))) {
         throw new ChartError(`chart already exists: ${chart.name}`, 409)
       }
-      const lint = lintChart(chart) // 3b lint seam — no-op today
+      const lint = lintChart(chart) // advisory static analysis (3b); never blocks register
       await this.chartStore!.write(chart.name, yamlText)
       await this.installRuntime(chart, this.chartStore!.path(chart.name))
       logLine(chart.name, "registered")
@@ -293,7 +297,7 @@ export class Daemon {
     name: string,
     yamlText: string,
     opts: { forceFail?: boolean } = {},
-  ): Promise<{ name: string; warnings: string[] }> {
+  ): Promise<{ name: string; warnings: LintWarning[] }> {
     return this.mutate(async () => {
       const existing = this.runtimes.get(name)
       if (!existing) throw new ChartError(`unknown chart: ${name}`, 404)
@@ -418,6 +422,8 @@ export class Daemon {
       })),
       edges: rt.chart.edges.map((e) => ({ from: e.from, to: e.to, name: e.name, default: e.default, form: e.form })),
       layout: { boxes, width: rt.layout.width, height: rt.layout.height },
+      // Re-linted per request: the live chart may have been hot-reloaded since boot.
+      lint: lintChart(rt.chart).warnings,
     }
   }
 
