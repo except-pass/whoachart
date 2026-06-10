@@ -1,5 +1,6 @@
 import type { Daemon } from "./daemon"
 import { FormError } from "./forms"
+import { isTrustedAddr } from "./netGuard"
 import { renderPage } from "./ui/page"
 import { serveStatic } from "./ui/static"
 
@@ -26,9 +27,18 @@ export function createControlApi(daemon: Daemon, port: number) {
   const json = (data: unknown, status = 200) =>
     Response.json(data, { status, headers: CORS })
 
+  // The control plane executes shell scripts and spawns agent sessions, so it
+  // only answers loopback + Tailscale peers (see netGuard). WHOACHART_TRUST_ALL=1
+  // opts back into the old open behavior on an already-trusted network.
+  const trustAll = process.env.WHOACHART_TRUST_ALL === "1"
+
   return Bun.serve({
     port,
-    async fetch(req) {
+    async fetch(req, server) {
+      if (!trustAll && !isTrustedAddr(server.requestIP(req)?.address)) {
+        return new Response("forbidden", { status: 403, headers: CORS })
+      }
+
       const url = new URL(req.url)
       const p = url.pathname.split("/").filter(Boolean)
 
