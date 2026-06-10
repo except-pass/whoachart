@@ -29,6 +29,15 @@ test("load returns null for missing marble", async () => {
   expect(await store.load("nope")).toBeNull()
 })
 
+test("load throws on a corrupt file instead of reporting it as a missing marble", async () => {
+  const dir = tmpDir()
+  const store = new MarbleStore(dir)
+  await store.init()
+  const { writeFile } = await import("node:fs/promises")
+  await writeFile(join(dir, "broken.json"), "{ not valid json")
+  await expect(store.load("broken")).rejects.toThrow(/corrupt/)
+})
+
 test("all returns every saved marble", async () => {
   const store = new MarbleStore(tmpDir())
   await store.init()

@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 export const DEFAULT_PORT = 5330
 
 export interface CliArgs {
@@ -24,7 +25,14 @@ export function parseArgs(argv: string[]): CliArgs {
     }
   }
   const cmd = positional[0] ?? "help"
-  const args: CliArgs = { cmd, port: flags.has("port") ? Number(flags.get("port")) : DEFAULT_PORT }
+  let port = DEFAULT_PORT
+  if (flags.has("port")) {
+    port = Number(flags.get("port"))
+    if (!Number.isInteger(port) || port < 0 || port > 65535) {
+      throw new Error(`invalid --port: ${flags.get("port")} (expected an integer 0–65535)`)
+    }
+  }
+  const args: CliArgs = { cmd, port }
 
   if (cmd === "submit" || cmd === "marbles") args.chart = positional[1]
   if (cmd === "signal") { args.chart = positional[1]; args.marble = positional[2] }

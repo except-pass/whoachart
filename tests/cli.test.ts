@@ -24,6 +24,11 @@ test("defaults port and reads --port override", () => {
   expect(parseArgs(["charts", "--port", "9999"]).port).toBe(9999)
 })
 
+test("rejects a non-numeric or out-of-range --port instead of silently using NaN", () => {
+  expect(() => parseArgs(["charts", "--port", "abc"])).toThrow(/invalid --port/)
+  expect(() => parseArgs(["charts", "--port", "70000"])).toThrow(/invalid --port/)
+})
+
 test("invalid context json throws a clear error", () => {
   expect(() => parseArgs(["submit", "demo", "--context", "{bad"])).toThrow(/context/)
 })

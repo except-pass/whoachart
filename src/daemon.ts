@@ -252,7 +252,11 @@ export class Daemon {
     if (typeof session === "string" && session && this.launcher) {
       const node = this.nodeById(rt, before!.node)
       if (node?.type === "agent" && (node.config as Record<string, unknown>).keep_session !== true) {
-        void this.launcher.stopSession(session)
+        // Fire-and-forget teardown, but never let a rejecting launcher surface as
+        // an unhandled promise rejection in the daemon.
+        void this.launcher.stopSession(session).catch((err) =>
+          logLine(name, `session stop failed for ${session}: ${String(err).split("\n")[0]}`),
+        )
       }
     }
   }

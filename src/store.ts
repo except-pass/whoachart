@@ -20,10 +20,20 @@ export class MarbleStore {
   }
 
   async load(id: string): Promise<Marble | null> {
+    let raw: string
     try {
-      return JSON.parse(await readFile(this.path(id), "utf8")) as Marble
-    } catch {
-      return null
+      raw = await readFile(this.path(id), "utf8")
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null // genuinely no such marble
+      throw err // a real read error (perms, I/O) must not masquerade as "unknown marble"
+    }
+    try {
+      return JSON.parse(raw) as Marble
+    } catch (err) {
+      // Corrupt existing file — surface it loudly, matching all()'s behavior,
+      // instead of reporting it to callers as a nonexistent marble.
+      console.error(`[whoachart] unreadable marble file ${id}.json: ${err}`)
+      throw new Error(`corrupt marble file: ${id}`)
     }
   }
 
