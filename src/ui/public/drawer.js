@@ -117,12 +117,13 @@ export async function showMarble(id, gateInfo, api) {
   // Don't clobber the DOM while the user is typing in a drawer form, and
   // skip identical re-renders (the poll loop calls this every 600ms).
   if (el.contains(document.activeElement) && document.activeElement !== document.body) return
+  const steps = trailSteps(m)
+  if (stepSel !== null && stepSel > steps.length - 1) stepSel = null // pinned step fell off (e.g. retry reset the trail)
   const renderKey = id + JSON.stringify(m) + JSON.stringify(gateInfo) + "|" + stepSel
   if (renderKey === lastRender) return
   lastRender = renderKey
   const status = m.status
   const failed = status === "failed" && m.error
-  const steps = trailSteps(m)
   const sel = stepSel ?? Math.max(0, steps.length - 1)
 
   el.innerHTML = `
