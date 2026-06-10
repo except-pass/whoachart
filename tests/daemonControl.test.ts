@@ -178,6 +178,64 @@ test("def redacts secret-bearing config values but keeps the structure visible",
   expect(cfg2.request.headers.Authorization).toBe("***redacted***")
 })
 
+const LOGCHART = `
+name: loggy
+nodes:
+  - id: ingest
+    type: source
+    config: { trigger: api }
+  - id: work
+    type: shell
+    config:
+      on_enter: |
+        echo "hello from $WHOACHART_MARBLE"
+        echo "oops" 1>&2
+  - id: done
+    type: end
+    config: { outcome: success }
+edges:
+  - { from: ingest, to: work }
+  - { from: work, to: done }
+`
+
+async function makeLoggy() {
+  const dir = await mkdtemp(join(tmpdir(), "wc-dc-log-"))
+  await writeFile(join(dir, "loggy.yaml"), LOGCHART)
+  const d = new Daemon({
+    charts: [join(dir, "loggy.yaml")],
+    storeDir: join(dir, "store"),
+    client: new FakeCanvas(),
+    launcher: new FakeLauncher(),
+  })
+  await d.start()
+  return d
+}
+
+test("logsSince captures shell stdout/stderr and lifecycle events per node", async () => {
+  const d = await makeLoggy()
+  const { id } = await d.submit("loggy")
+  await waitForStatus(() => d.marble("loggy", id), "done")
+
+  const { lines, nextSeq } = d.logsSince("loggy", "work", 0)
+  // shell stdout + stderr both captured, tagged by stream and marble
+  expect(lines.some((l) => l.stream === "stdout" && l.line.includes(`hello from ${id}`))).toBe(true)
+  expect(lines.some((l) => l.stream === "stderr" && l.line === "oops")).toBe(true)
+  // lifecycle events join the same feed
+  expect(lines.some((l) => l.stream === "event" && l.line.includes("enter"))).toBe(true)
+  expect(lines.every((l) => l.marble === id)).toBe(true)
+  expect(nextSeq).toBeGreaterThan(0)
+
+  // cursor advances: nothing new since nextSeq
+  expect(d.logsSince("loggy", "work", nextSeq).lines).toEqual([])
+  // a different node has its own (separate) feed
+  expect(d.logsSince("loggy", "ingest", 0).lines.every((l) => l.node === "ingest")).toBe(true)
+})
+
+test("logsSince on an unknown/never-run node is a cheap empty delta", async () => {
+  const d = await makeLoggy()
+  expect(d.logsSince("loggy", "done", 0)).toEqual({ lines: [], nextSeq: 0 })
+})
+
 test("submit validates the source form", async () => {
   const { d } = await makeDaemon()
   await expect(d.submit("gatey", { context: {} })).rejects.toThrow(FormError)

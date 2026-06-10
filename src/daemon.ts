@@ -7,7 +7,9 @@ import { hasNodeType, registerNodeType, type NodeType } from "./registry"
 import { MarbleStore } from "./store"
 import { Engine, newMarble, type EngineEvent } from "./engine"
 import { ViewState, type ViewSnapshot } from "./view/viewState"
+import { LogBuffer, type LogDelta } from "./view/logBuffer"
 import { layoutChart, type Layout, type NodeBox } from "./view/layout"
+import { now } from "./util"
 import { validateForm } from "./forms"
 import type { CanvasControl, SessionLauncher, SpawnSessionOpts } from "./tinstar"
 import type { Chart, ChartNode, FormField, Marble, PresentSpec } from "./types"
@@ -27,6 +29,12 @@ function fmtEvent(e: EngineEvent): string {
     case "failed": return `FAILED marble=${e.marble} node=${e.node} error=${e.error.split("\n")[0]}`
     case "retried": return `retried marble=${e.marble} node=${e.node}`
   }
+}
+
+// Which node a lifecycle event belongs to in the per-node log feed. `traverse`
+// carries from/to instead of a single node — attribute it to the node being left.
+function eventNode(e: EngineEvent): string {
+  return e.type === "traverse" ? e.from : e.node
 }
 
 function loggingLauncher(inner: SessionLauncher): SessionLauncher {
@@ -61,6 +69,7 @@ interface ChartRuntime {
   engine: Engine
   store: MarbleStore
   view: ViewState
+  logs: LogBuffer
   layout: Layout
   start: string
 }
@@ -150,18 +159,25 @@ export class Daemon {
       const store = new MarbleStore(join(this.opts.storeDir, chart.name))
       await store.init()
       const view = new ViewState(chart)
+      const logs = new LogBuffer()
       const engine = new Engine({
         chart,
         store,
         concurrency: this.opts.concurrency,
         nodeTypes,
         onChange: (m) => view.apply(m),
-        onEvent: (e) => logLine(chart.name, fmtEvent(e)),
+        onEvent: (e) => {
+          logLine(chart.name, fmtEvent(e))
+          // Lifecycle events join the per-node feed so even no-stdout nodes
+          // (human/agent/end) show a meaningful timeline in the inspector.
+          logs.append({ marble: e.marble, node: eventNode(e), stream: "event", line: fmtEvent(e), ts: now() })
+        },
+        onLog: (x) => logs.append({ ...x, ts: now() }),
       })
       view.seed(await store.all())
       await engine.resume()
       this.runtimes.set(chart.name, {
-        chart, engine, store, view, layout: layoutChart(chart), start: findStart(chart),
+        chart, engine, store, view, logs, layout: layoutChart(chart), start: findStart(chart),
       })
       this.ensureWidgetLoop(chart)
     }
@@ -293,5 +309,11 @@ export class Daemon {
   // Bounded live view aggregate for the UI to poll. O(1) — no store scans.
   snapshot(name: string): ViewSnapshot {
     return this.rt(name).view.snapshot()
+  }
+
+  // Delta of a node's live-output feed since the caller's cursor (ring-bounded,
+  // so since=0 returns at most one ring's worth, never a full replay).
+  logsSince(name: string, nodeId: string, since: number, marble?: string): LogDelta {
+    return this.rt(name).logs.since(nodeId, since, marble)
   }
 }

@@ -148,6 +148,52 @@ test("showNode rebuilds the live container when switching nodes", () => {
   expect(el.querySelector("#nodeLiveOutput")!.children.length).toBe(2) // header + placeholder, the stray div is gone
 })
 
+const flush = () => new Promise((r) => setTimeout(r, 0))
+
+test("showNode streams logs: fetches from cursor 0, appends, advances _since", async () => {
+  const el = setupDom()
+  const calls: { id: string; since: number }[] = []
+  let served: any = {
+    lines: [{ seq: 3, ts: "2026-06-10T00:00:01.000Z", marble: "abcd1234", node: "build", stream: "stdout", line: "hi there" }],
+    nextSeq: 3,
+  }
+  const api = { openMarble() {}, nodeLogs: (id: string, since: number) => { calls.push({ id, since }); return Promise.resolve(served) } }
+
+  showNode("build", DEF, { live: [], stats: {}, ends: {} }, api)
+  await flush()
+  expect(calls[0]).toEqual({ id: "build", since: 0 }) // just-selected → cursor 0
+  const c = el.querySelector("#nodeLiveOutput") as any
+  expect(c._since).toBe(3)
+  expect(el.querySelector(".logline")).toBeTruthy()
+  expect(el.querySelector(".logfeed")!.textContent).toContain("hi there")
+  expect(el.querySelector(".liveplaceholder")).toBeNull() // placeholder cleared on first line
+
+  // next poll on the same node resumes from the advanced cursor
+  served = { lines: [], nextSeq: 3 }
+  showNode("build", DEF, { live: [], stats: {}, ends: {} }, api)
+  await flush()
+  expect(calls[1]).toEqual({ id: "build", since: 3 })
+})
+
+test("showNode resets the log cursor to 0 when switching nodes", async () => {
+  const el = setupDom()
+  const calls: { id: string; since: number }[] = []
+  const api = {
+    openMarble() {},
+    nodeLogs: (id: string, since: number) => {
+      calls.push({ id, since })
+      return Promise.resolve({ lines: [{ seq: 9, ts: "2026-06-10T00:00:01.000Z", marble: "m", node: id, stream: "stdout", line: "x" }], nextSeq: 9 })
+    },
+  }
+  showNode("build", DEF, { live: [], stats: {}, ends: {} }, api)
+  await flush()
+  expect((el.querySelector("#nodeLiveOutput") as any)._since).toBe(9)
+
+  showNode("review", DEF, { live: [], stats: {}, ends: {} }, api) // switch → container rebuilt
+  await flush()
+  expect(calls.at(-1)).toEqual({ id: "review", since: 0 }) // cursor reset, not carried over
+})
+
 test("showNode wires marble rows to openMarble", () => {
   const el = setupDom()
   const opened: string[] = []

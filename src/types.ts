@@ -88,4 +88,7 @@ export interface RunCtx {
   // Aborted when the node's `timeout` elapses, so activities can kill their
   // underlying process / in-flight fetch instead of leaking it past the deadline.
   signal?: AbortSignal
+  // Live output sink: an activity calls this per line to stream its execution
+  // into the node inspector. Engine tags each line with (marble, node).
+  log?: (stream: "stdout" | "stderr", line: string) => void
 }

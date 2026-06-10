@@ -39,11 +39,55 @@ export function parseEmit(stdout: string): { next?: string; merge?: Record<strin
   return {}
 }
 
+// Stream type for live output chunks. "stdout"/"stderr" come from the activity
+// process; the engine adds "event" lines for lifecycle.
+export type LogStream = "stdout" | "stderr"
+
+// Read a piped stream to completion, invoking onLine for each COMPLETE line as
+// it arrives (line-buffered live streaming, not buffer-to-exit), and returning
+// the full accumulated text for parseEmit / the ActivityOutput.
+async function pumpStream(
+  stream: ReadableStream<Uint8Array>,
+  which: LogStream,
+  onLine?: (stream: LogStream, line: string) => void,
+): Promise<string> {
+  const reader = stream.getReader()
+  const dec = new TextDecoder()
+  let pending = ""
+  let full = ""
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    const text = dec.decode(value, { stream: true })
+    full += text
+    pending += text
+    let nl: number
+    while ((nl = pending.indexOf("\n")) >= 0) {
+      onLine?.(which, pending.slice(0, nl))
+      pending = pending.slice(nl + 1)
+    }
+  }
+  const tail = dec.decode()
+  if (tail) { full += tail; pending += tail }
+  if (pending.length) onLine?.(which, pending) // final line without a trailing newline
+  return full
+}
+
+// Run a shell activity. onLine (if given) receives each stdout/stderr line live
+// as the process emits it — used to stream node execution into the inspector.
+//
+// SECURITY: raw stdout/stderr is forwarded VERBATIM to onLine (and from there to
+// the tailnet-reachable /nodes/:id/logs feed). It is NOT content-redacted —
+// free-text output can't be reliably scrubbed the way structured /def config
+// keys are. This is safe ONLY on the current loopback + Tailscale trust surface
+// (see netGuard). Before the control plane goes multi-user this must be revisited
+// (tracked with the /def redaction residuals — same trust-surface trigger).
 export async function runShell(
   script: string,
   marble: Marble,
   node: ChartNode,
   signal?: AbortSignal,
+  onLine?: (stream: LogStream, line: string) => void,
 ): Promise<ActivityOutput> {
   const ctxPath = join(tmpdir(), `whoachart-ctx-${marble.id}-${node.id}.json`)
   await writeFile(ctxPath, JSON.stringify(marble.context))
@@ -61,8 +105,11 @@ export async function runShell(
     else signal?.addEventListener("abort", onAbort, { once: true })
 
     try {
-      const stdout = await new Response(proc.stdout).text()
-      const stderr = await new Response(proc.stderr).text()
+      // Drain both pipes concurrently so neither blocks the other on a full buffer.
+      const [stdout, stderr] = await Promise.all([
+        pumpStream(proc.stdout, "stdout", onLine),
+        pumpStream(proc.stderr, "stderr", onLine),
+      ])
       const exitCode = await proc.exited
 
       const { next, merge } = parseEmit(stdout)

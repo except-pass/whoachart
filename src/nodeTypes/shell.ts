@@ -7,7 +7,7 @@ export const shellNode: NodeType = {
   configSchema: z.object({ on_enter: z.string() }),
   async run(ctx) {
     const cfg = ctx.node.config as { on_enter: string }
-    const out = await runShell(cfg.on_enter, ctx.marble, ctx.node, ctx.signal)
+    const out = await runShell(cfg.on_enter, ctx.marble, ctx.node, ctx.signal, ctx.log)
     return { next: out.next, merge: out.merge, failed: out.exitCode !== 0 }
   },
 }

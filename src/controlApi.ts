@@ -16,6 +16,7 @@ const CORS = {
 //   GET  /api/charts
 //   GET  /api/charts/:name/def            (chart topology + layout)
 //   GET  /api/charts/:name/state          (bounded live view aggregate; polled by the canvas page)
+//   GET  /api/charts/:name/nodes/:id/logs (live-output delta: ?since=<seq>&marble=<id>)
 //   POST /api/charts/:name/marbles        { context?, workpiece?, start? }
 //   GET  /api/charts/:name/marbles
 //   GET  /api/charts/:name/marbles/:id
@@ -71,6 +72,14 @@ export function createControlApi(daemon: Daemon, port: number) {
 
         if (p[0] === "api" && p[1] === "charts" && p[2] && p[3] === "state" && req.method === "GET") {
           return json(daemon.snapshot(p[2]))
+        }
+
+        // Live-output delta for one node (inspector live feed). since defaults to
+        // 0 (NaN-safe); the ring bound keeps that cheap. ?marble= filters to one.
+        if (p[0] === "api" && p[1] === "charts" && p[2] && p[3] === "nodes" && p[4] && p[5] === "logs" && req.method === "GET") {
+          const since = Number(url.searchParams.get("since")) || 0
+          const marble = url.searchParams.get("marble") ?? undefined
+          return json(daemon.logsSince(p[2], decodeURIComponent(p[4]), since, marble))
         }
 
         if (p[0] === "api" && p[1] === "charts" && p[2] && p[3] === "marbles") {

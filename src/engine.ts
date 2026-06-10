@@ -1,4 +1,4 @@
-import type { Chart, ChartEdge, ChartNode, Marble, NodeResult } from "./types"
+import type { Chart, ChartEdge, ChartNode, Marble, NodeResult, RunCtx } from "./types"
 import { getNodeType, type NodeType } from "./registry"
 import { runShell } from "./context"
 import { MarbleStore } from "./store"
@@ -22,6 +22,10 @@ export interface EngineOpts {
   maxSteps?: number
   onChange?: (m: Marble) => void
   onEvent?: (e: EngineEvent) => void
+  // Live per-(marble,node) output sink: shell stdout/stderr lines, streamed as
+  // the activity runs. Lifecycle events stay on onEvent; the daemon merges both
+  // into the inspector's log feed.
+  onLog?: (e: { marble: string; node: string; stream: "stdout" | "stderr"; line: string }) => void
   // Instance-scoped node-type overrides, resolved before the global registry.
   // The daemon passes its wired `agent` node here so per-daemon launcher/baseUrl
   // wiring never leaks through the module-global registry to another daemon.
@@ -176,14 +180,22 @@ export class Engine {
     this.opts.onChange?.(structuredClone(m))
   }
 
+  // Tag a live-output line with this marble+node before forwarding to onLog.
+  private logFor(m: Marble, node: ChartNode): RunCtx["log"] {
+    const onLog = this.opts.onLog
+    if (!onLog) return undefined
+    return (stream, line) => onLog({ marble: m.id, node: node.id, stream, line })
+  }
+
   private async execNode(node: ChartNode, m: Marble): Promise<NodeResult> {
     const nt = this.nodeType(node.type)
     const max = node.retry?.max ?? 0
+    const log = this.logFor(m, node)
     let lastErr: unknown
     for (let attempt = 0; attempt <= max; attempt++) {
       try {
         const res = await withTimeout(
-          (signal) => nt.run({ chart: this.opts.chart, marble: m, node, outgoing: this.outgoing(node.id), signal }),
+          (signal) => nt.run({ chart: this.opts.chart, marble: m, node, outgoing: this.outgoing(node.id), signal, log }),
           node.timeout,
         )
         if (res.failed && attempt < max) continue
@@ -209,8 +221,9 @@ export class Engine {
   }
 
   // Run a side-effect hook; log (but do not fail the marble on) a non-zero exit.
+  // Hook stdout/stderr streams into the same per-node feed as the main activity.
   private async runHook(script: string, m: Marble, node: ChartNode): Promise<void> {
-    const out = await runShell(script, m, node)
+    const out = await runShell(script, m, node, undefined, this.logFor(m, node))
     if (out.exitCode !== 0) {
       console.error(
         `[whoachart] hook on node ${node.id} (marble ${m.id}) exited ${out.exitCode}: ${out.stderr.trim()}`,

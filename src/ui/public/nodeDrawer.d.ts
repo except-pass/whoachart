@@ -18,9 +18,16 @@ export function renderNodeBody(
   marbles: { id: string; node: string; status: string }[],
   ends: { total: number; recent: unknown[] } | null,
 ): string
+export interface NodeLogDelta {
+  lines: { seq: number; ts: string; marble: string; node: string; stream: string; line: string }[]
+  nextSeq: number
+}
 export function showNode(
   id: string,
   def: { nodes: any[] },
   state: { live: any[]; stats: Record<string, any>; ends: Record<string, any> },
-  api: { openMarble: (id: string) => void },
+  api: {
+    openMarble: (id: string) => void
+    nodeLogs?: (nodeId: string, since: number) => Promise<NodeLogDelta | null>
+  },
 ): void

@@ -75,6 +75,31 @@ test("unknown route returns 404", async () => {
   expect(res.status).toBe(404)
 })
 
+test("GET /api/charts/:name/nodes/:id/logs returns a delta and advances the cursor", async () => {
+  await fetch(`${base}/api/charts/demo/marbles`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+  // lifecycle events land in the per-node feed even for non-shell nodes
+  let res!: Response
+  const body = await waitFor(async () => {
+    res = await fetch(`${base}/api/charts/demo/nodes/ingest/logs?since=0`)
+    const b = (await res.json()) as any
+    return b.lines?.length >= 1 ? b : null
+  }, { label: "lifecycle event appears in ingest log feed" })
+  expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*")
+  expect(body.lines.every((l: any) => l.node === "ingest")).toBe(true)
+  expect(body.nextSeq).toBeGreaterThan(0)
+
+  // cursor advances: since=nextSeq returns nothing new
+  const empty = await (await fetch(`${base}/api/charts/demo/nodes/ingest/logs?since=${body.nextSeq}`)).json() as any
+  expect(empty.lines).toEqual([])
+  expect(empty.nextSeq).toBe(body.nextSeq)
+})
+
+test("GET .../nodes/:id/logs on an unknown node is an empty delta, not an error", async () => {
+  const res = await fetch(`${base}/api/charts/demo/nodes/ghost/logs`)
+  expect(res.status).toBe(200)
+  expect(await res.json()).toEqual({ lines: [], nextSeq: 0 })
+})
+
 test("GET /api/charts/:name/state returns the bounded view aggregate with CORS", async () => {
   await fetch(`${base}/api/charts/demo/marbles`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
   let res!: Response

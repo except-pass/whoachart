@@ -84,7 +84,15 @@ const API = {
     if (b?.fields) return { fields: b.fields }
     return { message: b?.error ?? `submit failed (${res.status})` }
   },
+  // Live-output delta for a node: { lines, nextSeq } since the given cursor.
+  async nodeLogs(nodeId, since) {
+    const res = await fetch(api(`/nodes/${encodeURIComponent(nodeId)}/logs?since=${since}`), { cache: "no-store" })
+    return res.ok ? jsonOrNull(res) : null
+  },
 }
+
+// Shared deps handed to the node inspector: jump-to-marble + the log fetcher.
+const NODE_API = { openMarble: openDrawer, nodeLogs: (id, since) => API.nodeLogs(id, since) }
 
 // ---------- static graph ----------
 
@@ -428,7 +436,7 @@ function openDrawer(id) {
 function openNodeDrawer(id) {
   deselectMarble()
   highlightNode(id)
-  showNode(id, DEF, lastState, { openMarble: openDrawer })
+  showNode(id, DEF, lastState, NODE_API)
 }
 
 function highlightNode(id) {
@@ -481,7 +489,7 @@ async function tick() {
     void showMarble(sel, live?.gate ?? null, API)
   }
   const selN = selectedNode()
-  if (selN) showNode(selN, DEF, state, { openMarble: openDrawer })
+  if (selN) showNode(selN, DEF, state, NODE_API)
 }
 
 // ---------- boot ----------

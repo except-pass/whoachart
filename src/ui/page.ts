@@ -61,6 +61,15 @@ svg{width:100%;height:100%;display:block}
 .kv.mrow{cursor:pointer}.kv.mrow:hover{background:#13202c}
 .mswatch{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}
 .liveplaceholder{color:var(--dim);font:10.5px monospace}
+/* live output feed */
+.logfeed{max-height:240px;overflow:auto;background:#06090d;border:1px solid #15202b;border-radius:7px;
+  padding:6px 8px;font:10px monospace;line-height:1.55}
+.logline{white-space:pre-wrap;word-break:break-word}
+.logline .lts{color:#42525f}
+.logline .lm{color:var(--dim)}
+.logline.lout .ltx{color:#9fb6c9}
+.logline.lerr .ltx{color:#ffb4b4}
+.logline.levt .ltx{color:var(--cyan)}
 .crumb{font:10.5px monospace;color:var(--dim);line-height:1.9;margin:4px 0 10px}
 .crumb b{color:#9fb6c9}.crumb .now{color:var(--violet)}.crumb .t{color:#42525f}
 .crumb .step{cursor:pointer;border-radius:4px;padding:1px 2px}

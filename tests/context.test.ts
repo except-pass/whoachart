@@ -38,6 +38,40 @@ test("runShell exposes context + ids via env", async () => {
   expect(out.stdout).toContain("node=a")
 })
 
+test("runShell streams stdout lines LIVE (mid-execution), not buffered to exit", async () => {
+  const got: string[] = []
+  let firstResolve: () => void
+  const firstSeen = new Promise<void>((r) => { firstResolve = r })
+  const onLine = (_stream: "stdout" | "stderr", line: string) => {
+    got.push(line)
+    if (line === "first") firstResolve()
+  }
+  // "second" is gated behind a 0.3s sleep. If runShell buffered to completion,
+  // onLine would fire for both at once AFTER the sleep — so firstSeen would only
+  // resolve with "second" already present. Streaming makes "first" arrive
+  // immediately, before "second" exists.
+  const p = runShell(`echo first; sleep 0.3; echo second`, marble(), node, undefined, onLine)
+  await firstSeen
+  expect(got).toContain("first")
+  expect(got).not.toContain("second")
+  const out = await p
+  expect(got).toContain("second") // and the rest still streams through
+  expect(out.stdout).toContain("first") // full text still returned for parseEmit
+  expect(out.stdout).toContain("second")
+})
+
+test("runShell tags stderr lines distinctly and flushes a final newline-less line", async () => {
+  const got: { s: string; l: string }[] = []
+  const out = await runShell(
+    `echo out1; echo err1 1>&2; printf 'no-newline-tail'`,
+    marble(), node, undefined, (s, l) => got.push({ s, l }),
+  )
+  expect(got).toContainEqual({ s: "stdout", l: "out1" })
+  expect(got).toContainEqual({ s: "stderr", l: "err1" })
+  expect(got).toContainEqual({ s: "stdout", l: "no-newline-tail" }) // partial last line flushed
+  expect(out.stdout).toContain("no-newline-tail")
+})
+
 test("runShell kills the process when the signal aborts (no orphan side effects)", async () => {
   const marker = join(tmpdir(), `whoachart-kill-${crypto.randomUUID().slice(0, 8)}`)
   const ctrl = new AbortController()

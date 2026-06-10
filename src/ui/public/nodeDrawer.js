@@ -54,8 +54,56 @@ function kv(k, v) {
 function liveSectionHtml(node) {
   return `<div class="section" id="nodeLiveOutput" data-node="${escHtml(node.id)}">
     <div class="sh">live output</div>
-    <div class="liveplaceholder">— per-node output streaming arrives in task 1b —</div>
+    <div class="logfeed"><div class="liveplaceholder">waiting for output…</div></div>
   </div>`
+}
+
+const FEED_MAX = 200 // mirror the server-side ring bound
+
+function logLineHtml(e) {
+  const cls = e.stream === "stderr" ? "lerr" : e.stream === "event" ? "levt" : "lout"
+  const t = typeof e.ts === "string" ? e.ts.slice(11, 19) : "" // HH:MM:SS out of the ISO ts
+  return `<div class="logline ${cls}">` +
+    `<span class="lts">${escHtml(t)}</span> ` +
+    `<span class="lm" title="${escHtml(String(e.marble))}">${escHtml(String(e.marble).slice(0, 4))}</span> ` +
+    `<span class="ltx">${escHtml(e.line)}</span></div>`
+}
+
+function appendLogLines(container, lines) {
+  if (!lines || !lines.length) return
+  const feed = container.querySelector(".logfeed")
+  if (!feed) return
+  feed.querySelector(".liveplaceholder")?.remove()
+  // Stick to the bottom only if the user is already there, so scrolling up to
+  // read history isn't yanked away by new lines.
+  const atBottom = feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 4
+  feed.insertAdjacentHTML("beforeend", lines.map(logLineHtml).join(""))
+  while (feed.children.length > FEED_MAX) feed.firstElementChild.remove()
+  if (atBottom) feed.scrollTop = feed.scrollHeight
+}
+
+// Poll the node's live-output delta and append it. The cursor (`_since`) lives on
+// the stable #nodeLiveOutput container, so a node switch — which rebuilds that
+// container — resets the cursor to 0 automatically. Guarded against overlapping
+// fetches and against the container being rebuilt mid-flight (node switch).
+function pumpLogs(nodeId, api) {
+  if (!api || typeof api.nodeLogs !== "function") return
+  const c = body().querySelector("#nodeLiveOutput")
+  if (!c || c.dataset.node !== nodeId || c._busy) return
+  c._busy = true
+  const since = c._since ?? 0
+  Promise.resolve(api.nodeLogs(nodeId, since))
+    .then((res) => {
+      const cc = body().querySelector("#nodeLiveOutput")
+      if (!res || !cc || cc.dataset.node !== nodeId) return // switched away mid-flight
+      appendLogLines(cc, res.lines)
+      cc._since = res.nextSeq ?? since
+    })
+    .catch(() => {})
+    .finally(() => {
+      const cc = body().querySelector("#nodeLiveOutput")
+      if (cc) cc._busy = false
+    })
 }
 
 // Pure: node def + live data -> meta HTML. Unit-testable without a DOM.
@@ -143,6 +191,10 @@ export function showNode(id, def, state, api) {
     el.innerHTML = `<div id="nodeMeta"></div>${liveSectionHtml(node)}`
     lastRender = ""
   }
+
+  // Stream live output every tick, independent of the meta change-detection:
+  // logs change far more often than stats, so don't gate them on a meta diff.
+  pumpLogs(id, api)
 
   const renderKey = JSON.stringify({ node, stats, marbles, ends })
   if (renderKey === lastRender) return
