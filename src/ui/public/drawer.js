@@ -137,11 +137,17 @@ export async function showMarble(id, gateInfo, api) {
     ${gateInfo ? `<div class="section decision"><div class="sh">⏳ decision required · ${escHtml(m.node)}</div>${presentHtml(m, gateInfo)}${decisionHtml(gateInfo)}<div id="dForm"></div></div>` : `<div id="dForm"></div>`}
     <div class="section"><div class="sh">history · click a step</div>
     ${trailHtml(steps, sel)}
+    ${stepSel !== null ? `<div class="pinhint">pinned to a past step · <span class="resume" id="dResumeLive">⏵ resume live</span></div>` : ""}
     ${statePanel(m, steps, sel)}</div>
   `
 
   el.querySelector("#dFocus")?.addEventListener("click", () => api.focusSession(id))
   el.querySelector("#dRetry")?.addEventListener("click", () => api.retry(id))
+  el.querySelector("#dResumeLive")?.addEventListener("click", () => {
+    stepSel = null
+    lastRender = ""
+    void showMarble(id, gateInfo, api)
+  })
 
   for (const stepEl of el.querySelectorAll(".crumb .step")) {
     stepEl.addEventListener("click", () => {

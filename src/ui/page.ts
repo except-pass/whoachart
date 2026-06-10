@@ -64,6 +64,8 @@ svg{width:100%;height:100%;display:block}
 .crumb .step.sel{background:#0f2630;outline:1px solid #1d4754}
 .crumb .step.sel b,.crumb .step.sel .now{color:var(--cyan)}
 .chg{color:var(--amber);font:10px monospace;margin:4px 0}
+.pinhint{font:10px monospace;color:var(--dim);margin:2px 0 8px}
+.pinhint .resume{cursor:pointer;color:var(--cyan)}.pinhint .resume:hover{text-decoration:underline}
 .section{border:1px solid #1b2836;border-radius:9px;padding:10px;margin:12px 0}
 .section.decision{border-color:#3a2f5a;background:#120f1f}
 .sh{font-size:10px;color:var(--dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px}
