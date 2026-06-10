@@ -14,13 +14,18 @@ const CORS = {
 // WRITE GATE — the single chokepoint every state-mutating chart route
 // (POST/PUT/DELETE /api/charts) passes through. Registering a chart installs
 // YAML the daemon will EXECUTE (shell/on_leave/agent), so writes are gated
-// STRICTER than reads/triggers: loopback only, never the tailnet. Authoring
+// STRICTER than reads/triggers: loopback ONLY, never the tailnet. Authoring
 // happens on the host, so this costs nothing operationally and removes remote
-// code-install from the tailnet surface entirely. WHOACHART_TRUST_ALL=1 still
-// overrides (explicit open-posture opt-in). SEAM: to allow remote authoring
-// later, accept a write-scoped token here. Returns a Response to reject, else null.
-function writeGate(addr: string | undefined, trustAll: boolean): Response | null {
-  if (trustAll || isLoopbackAddr(addr)) return null
+// code-install from the tailnet surface entirely.
+//
+// This is LOOPBACK-ABSOLUTE and is NOT overridable by WHOACHART_TRUST_ALL —
+// that env var still opens the base read/trigger gate (isTrustedAddr below), but
+// it deliberately can NOT re-open chart writes. (Not a bug: code-install stays
+// loopback-only even on a fully-trusted network.) SEAM: to allow remote
+// authoring later, accept a write-scoped token here, not a network override.
+// Returns a Response to reject, else null.
+function writeGate(addr: string | undefined): Response | null {
+  if (isLoopbackAddr(addr)) return null
   return new Response("forbidden: chart writes are loopback-only", { status: 403, headers: CORS })
 }
 
@@ -93,7 +98,7 @@ export function createControlApi(daemon: Daemon, port: number, opts: ControlApiO
 
         // POST /api/charts — register a new chart from a raw YAML request body.
         if (req.method === "POST" && url.pathname === "/api/charts") {
-          const blocked = writeGate(addr, trustAll)
+          const blocked = writeGate(addr)
           if (blocked) return blocked
           return json(await daemon.registerChart(await req.text()), 201)
         }
@@ -105,13 +110,13 @@ export function createControlApi(daemon: Daemon, port: number, opts: ControlApiO
         // PUT/DELETE /api/charts/:name — update (hot-reload) or remove a chart.
         if (p[0] === "api" && p[1] === "charts" && p[2] && !p[3]) {
           if (req.method === "PUT") {
-            const blocked = writeGate(addr, trustAll)
+            const blocked = writeGate(addr)
             if (blocked) return blocked
             const forceFail = url.searchParams.get("on_conflict") === "fail"
             return json(await daemon.updateChart(p[2], await req.text(), { forceFail }))
           }
           if (req.method === "DELETE") {
-            const blocked = writeGate(addr, trustAll)
+            const blocked = writeGate(addr)
             if (blocked) return blocked
             const force = url.searchParams.get("force") === "true"
             const purge = url.searchParams.get("purge") === "true"

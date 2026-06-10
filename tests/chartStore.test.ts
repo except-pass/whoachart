@@ -258,6 +258,32 @@ test("chart writes are loopback-only: a tailnet peer gets 403 on POST/PUT/DELETE
   }
 })
 
+test("WHOACHART_TRUST_ALL cannot re-open chart writes: tailnet peer still gets 403 on POST/PUT/DELETE", async () => {
+  // TRUST_ALL opens the base read/trigger gate, but writes are loopback-ABSOLUTE.
+  const prev = process.env.WHOACHART_TRUST_ALL
+  process.env.WHOACHART_TRUST_ALL = "1"
+  const srv = createControlApi(daemon, 0, { resolveAddr: () => "100.108.201.76" }) // tailnet, non-loopback
+  const b = `http://localhost:${srv.port}`
+  try {
+    // TRUST_ALL opens reads + triggers even from this peer
+    expect((await fetch(`${b}/api/charts`)).status).toBe(200)
+    const sub = await fetch(`${b}/api/charts/storey/marbles`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ context: {} }),
+    })
+    expect(sub.status).toBe(201)
+    // …but chart writes stay forbidden — TRUST_ALL does NOT override the write gate
+    expect((await fetch(`${b}/api/charts`, { method: "POST", body: NEW_CHART })).status).toBe(403)
+    expect((await fetch(`${b}/api/charts/storey`, { method: "PUT", body: GATE_CHART_SAFE_EDIT })).status).toBe(403)
+    expect((await fetch(`${b}/api/charts/storey?force=true`, { method: "DELETE" })).status).toBe(403)
+    expect(daemon.charts()).toContain("storey")
+    expect(daemon.charts()).not.toContain("freshy")
+  } finally {
+    srv.stop(true)
+    if (prev === undefined) delete process.env.WHOACHART_TRUST_ALL
+    else process.env.WHOACHART_TRUST_ALL = prev
+  }
+})
+
 test("submit is serialized behind a hot-reload — never enqueues on the discarded engine", async () => {
   // Park the reload mid-swap (engine stopped, runtime not yet replaced) by
   // blocking buildRuntime on a barrier, then prove a concurrent submit cannot
