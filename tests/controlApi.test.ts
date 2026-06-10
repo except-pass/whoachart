@@ -82,8 +82,13 @@ test("GET /api/charts/:name/nodes/:id/logs returns a delta and advances the curs
   const body = await waitFor(async () => {
     res = await fetch(`${base}/api/charts/demo/nodes/ingest/logs?since=0`)
     const b = (await res.json()) as any
-    return b.lines?.length >= 1 ? b : null
-  }, { label: "lifecycle event appears in ingest log feed" })
+    // ingest (source) emits TWO events into its feed: `enter`, then `traverse`
+    // as the marble leaves for `done`. Wait for the traverse so the feed is fully
+    // settled before we capture nextSeq — otherwise the later `since=nextSeq`
+    // fetch races the not-yet-arrived traverse event and returns a non-empty
+    // delta (the ~10% flake this guards against).
+    return b.lines?.some((l: any) => String(l.line).startsWith("traverse")) ? b : null
+  }, { label: "ingest log feed settled (enter + traverse)" })
   expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*")
   expect(body.lines.every((l: any) => l.node === "ingest")).toBe(true)
   expect(body.nextSeq).toBeGreaterThan(0)
