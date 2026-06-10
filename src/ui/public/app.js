@@ -35,9 +35,8 @@ function toast(msg) {
   const t = document.createElement("div")
   t.className = "toast"
   t.textContent = msg
-  // stack below any toasts already showing so rapid errors stay readable
-  t.style.top = `${10 + $("canvas").querySelectorAll(".toast").length * 34}px`
-  $("canvas").appendChild(t)
+  // flex-column container stacks toasts in DOM order so rapid errors stay readable
+  $("toasts").appendChild(t)
   setTimeout(() => {
     t.style.opacity = "0"
     setTimeout(() => t.remove(), 450)
@@ -231,6 +230,8 @@ function dropMarble(id) {
   const b = n && BOX[n]
   if (b && counts.has(n)) {
     const cp = counterPos(b)
+    // restore a transform transition — travelAlong may have left an opacity-only one
+    g.style.transition = "transform .55s cubic-bezier(.4,0,.2,1), opacity .45s"
     g.style.transform = `translate(${cp.x}px,${cp.y}px) scale(0.15)` // fly into the tally
   }
   g.style.opacity = "0"
@@ -359,15 +360,22 @@ function openModal(title, fields, onSubmit) {
     <button class="act" id="mCancel" style="border-color:#3a4a5a;color:var(--dim);background:none">cancel</button></div></div>`
   modal.classList.remove("hidden")
   modal.querySelector("#mCancel").addEventListener("click", closeModal)
-  modal.querySelector("#mGo").addEventListener("click", async () => {
-    const values = readForm(modal, fields)
-    const err = await onSubmit(values)
-    // reset both error layers so a retry can't show stale field + message errors together
-    showFieldErrors(modal, {})
-    modal.querySelector("#mErr").textContent = ""
-    if (err?.fields) showFieldErrors(modal, err.fields)
-    else if (err?.message) modal.querySelector("#mErr").textContent = err.message
-    else closeModal()
+  modal.querySelector("#mGo").addEventListener("click", async (ev) => {
+    const btn = ev.currentTarget
+    if (btn.disabled) return
+    btn.disabled = true // no concurrent submits — their error painting would interleave
+    try {
+      const values = readForm(modal, fields)
+      const err = await onSubmit(values)
+      // reset both error layers so a retry can't show stale field + message errors together
+      showFieldErrors(modal, {})
+      modal.querySelector("#mErr").textContent = ""
+      if (err?.fields) showFieldErrors(modal, err.fields)
+      else if (err?.message) modal.querySelector("#mErr").textContent = err.message
+      else closeModal()
+    } finally {
+      btn.disabled = false
+    }
   })
 }
 
