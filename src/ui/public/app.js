@@ -28,22 +28,42 @@ async function jsonOrNull(res) {
   try { return await res.json() } catch { return null }
 }
 
+// Transient operator feedback for non-field errors (e.g. "marble is not
+// blocked" when someone else already decided it). Silence here would let an
+// operator believe an action landed when it didn't.
+function toast(msg) {
+  const t = document.createElement("div")
+  t.className = "toast"
+  t.textContent = msg
+  $("canvas").appendChild(t)
+  setTimeout(() => {
+    t.style.opacity = "0"
+    setTimeout(() => t.remove(), 450)
+  }, 2600)
+}
+
 const API = {
   async marble(id) {
     const res = await fetch(api(`/marbles/${id}`), { cache: "no-store" })
     return res.ok ? jsonOrNull(res) : null
   },
-  // returns null on success, {fields} on validation failure
+  // returns null on success, {fields} on validation failure; other errors toast
   async signal(id, body) {
     const res = await fetch(api(`/marbles/${id}/signal`), {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     })
     if (res.ok) return null
     const b = await jsonOrNull(res)
-    return b?.fields ? { fields: b.fields } : null
+    if (b?.fields) return { fields: b.fields }
+    toast(b?.error ?? `signal failed (${res.status})`)
+    return null
   },
   async retry(id) {
-    await fetch(api(`/marbles/${id}/retry`), { method: "POST" })
+    const res = await fetch(api(`/marbles/${id}/retry`), { method: "POST" })
+    if (!res.ok) {
+      const b = await jsonOrNull(res)
+      toast(b?.error ?? `retry failed (${res.status})`)
+    }
   },
   async focusSession(id) {
     await fetch(api(`/marbles/${id}/focus-session`), { method: "POST" })
@@ -165,7 +185,7 @@ function travelAlong(g, id, from, to, dest) {
     if (t < 1) requestAnimationFrame(stepFrame)
     else {
       g.style.transition = prevTransition
-      setTransform(g, dest.x, dest.y)
+      if (els.get(id) === g) setTransform(g, dest.x, dest.y) // marble may have been dropped mid-travel
       traveling.delete(id)
       setTimeout(() => path.classList.remove("pulse"), 350)
     }
@@ -206,6 +226,7 @@ function dropMarble(id) {
   setTimeout(() => g.remove(), 600)
   els.delete(id)
   lastNode.delete(id)
+  traveling.delete(id)
 }
 
 function setCount(node, total) {

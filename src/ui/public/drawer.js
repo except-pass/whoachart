@@ -47,9 +47,12 @@ function presentHtml(m, gate) {
         case "json":
           rendered = `<pre class="json">${escHtml(JSON.stringify(v, null, 2))}</pre>`
           break
-        case "link":
-          rendered = `<a href="${escHtml(String(v))}" target="_blank" style="color:var(--cyan)">${escHtml(String(v))}</a>`
+        case "link": {
+          // context values are agent/user-supplied — only allow http(s) hrefs
+          const url = /^https?:\/\//i.test(String(v)) ? String(v) : "#"
+          rendered = `<a href="${escHtml(url)}" target="_blank" rel="noopener" style="color:var(--cyan)">${escHtml(String(v))}</a>`
           break
+        }
         // markdown renders as plain text for v1 — line breaks preserved by the CSS
         default:
           rendered = escHtml(String(v))

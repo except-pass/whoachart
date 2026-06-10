@@ -78,6 +78,10 @@ details.force{margin-top:8px;font-size:11px;color:var(--dim)}
 .tray.hidden{display:none}
 .tray .retry{border:1px solid var(--red);background:none;border-radius:5px;padding:1px 8px;
   color:#ffc9c9;cursor:pointer;font:10.5px monospace}
+/* toast */
+.toast{position:absolute;top:10px;left:50%;transform:translateX(-50%);background:#2a0f12;
+  border:1px solid var(--red);color:#ffc9c9;border-radius:8px;padding:6px 14px;
+  font:11px monospace;z-index:40;opacity:1;transition:opacity .4s}
 /* hover stats card */
 .hovercard{position:absolute;background:var(--panel);border:1px solid #2a3a4a;border-radius:7px;
   padding:8px 11px;font:10px monospace;color:var(--dim);pointer-events:none;z-index:30;line-height:1.7}
