@@ -55,6 +55,19 @@ test("GET /ui/charts/:name serves the shell html", async () => {
   // RELATIVE src — must survive Tinstar's widget proxy (see src/ui/page.ts)
   expect(html).toContain('src="../app.js"')
   expect(html).not.toContain('src="/ui/app.js"')
+  // The relative src must resolve to a route the daemon actually serves.
+  const src = html.match(/<script type="module" src="([^"]+)"/)![1]
+  const resolved = new URL(src, `${base}/ui/charts/gatey`)
+  expect(resolved.pathname).toBe("/ui/app.js")
+  const js = await fetch(resolved.href)
+  expect(js.status).toBe(200)
+  expect(js.headers.get("content-type")).toContain("javascript")
+})
+
+test("GET /ui/charts/:name/ (trailing slash) redirects to the slashless form", async () => {
+  const res = await fetch(`${base}/ui/charts/gatey/`, { redirect: "manual" })
+  expect(res.status).toBe(301)
+  expect(res.headers.get("location")).toBe("/ui/charts/gatey")
 })
 
 test("GET /ui/charts/unknown is 404", async () => {

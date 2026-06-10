@@ -36,6 +36,9 @@ export function createControlApi(daemon: Daemon, port: number) {
 
       // UI shell + static client
       if (req.method === "GET" && p[0] === "ui" && p[1] === "charts" && p[2] && !p[3]) {
+        // Canonicalize to the slashless form so the relative ../app.js src resolves
+        // to /ui/app.js. A trailing slash would resolve it to /ui/charts/app.js (404).
+        if (url.pathname.endsWith("/")) return Response.redirect(url.pathname.slice(0, -1), 301)
         if (!daemon.charts().includes(p[2])) return new Response("unknown chart", { status: 404 })
         return new Response(renderPage(p[2]), { headers: { "Content-Type": "text/html; charset=utf-8" } })
       }
