@@ -70,6 +70,7 @@ button.act{display:inline-block;margin:4px 6px 4px 0;padding:6px 12px;border-rad
   border:1px solid var(--cyan);color:#bff4ff;background:#0f2630;cursor:pointer}
 button.act.danger{border-color:var(--red);color:#ffc9c9;background:#2a0f12}
 button.act.violet{border-color:var(--violet);color:#d8c9ff;background:#16102a}
+button.act:disabled{opacity:.45;cursor:default}
 details.force{margin-top:8px;font-size:11px;color:var(--dim)}
 /* tray */
 .tray{position:absolute;left:12px;bottom:12px;right:12px;background:#140b0d;border:1px solid #5f1d22;
@@ -80,10 +81,12 @@ details.force{margin-top:8px;font-size:11px;color:var(--dim)}
   color:#ffc9c9;cursor:pointer;font:10.5px monospace}
 /* toast */
 .toasts{position:absolute;top:10px;left:50%;transform:translateX(-50%);display:flex;
-  flex-direction:column;align-items:center;gap:6px;z-index:40;pointer-events:none}
-.toast{background:#2a0f12;
+  flex-direction:column;align-items:center;z-index:40;pointer-events:none}
+.toast{background:#2a0f12;overflow:hidden;max-height:60px;margin-bottom:6px;
   border:1px solid var(--red);color:#ffc9c9;border-radius:8px;padding:6px 14px;
-  font:11px monospace;opacity:1;transition:opacity .4s}
+  font:11px monospace;opacity:1;
+  transition:opacity .4s,max-height .4s,margin .4s,padding .4s,border-width .4s}
+.toast.out{opacity:0;max-height:0;margin-bottom:0;padding-top:0;padding-bottom:0;border-width:0}
 /* hover stats card */
 .hovercard{position:absolute;background:var(--panel);border:1px solid #2a3a4a;border-radius:7px;
   padding:8px 11px;font:10px monospace;color:var(--dim);pointer-events:none;z-index:30;line-height:1.7}

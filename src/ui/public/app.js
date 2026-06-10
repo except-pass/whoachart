@@ -38,7 +38,7 @@ function toast(msg) {
   // flex-column container stacks toasts in DOM order so rapid errors stay readable
   $("toasts").appendChild(t)
   setTimeout(() => {
-    t.style.opacity = "0"
+    t.classList.add("out") // fades and collapses the slot so later toasts don't stack below a ghost
     setTimeout(() => t.remove(), 450)
   }, 2600)
 }
@@ -373,6 +373,10 @@ function openModal(title, fields, onSubmit) {
       if (err?.fields) showFieldErrors(modal, err.fields)
       else if (err?.message) modal.querySelector("#mErr").textContent = err.message
       else closeModal()
+    } catch {
+      // fetch rejects outright on network failure — paint something rather than nothing
+      showFieldErrors(modal, {})
+      modal.querySelector("#mErr").textContent = "request failed — is the daemon up?"
     } finally {
       btn.disabled = false
     }
