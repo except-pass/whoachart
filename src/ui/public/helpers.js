@@ -87,13 +87,8 @@ export function trailSteps(marble) {
     const live = !h.leftAt
     const context = live ? (marble.context ?? {}) : (h.context ?? null)
     const prev = i > 0 ? (trail[i - 1].context ?? null) : null
-    const changedKeys = []
-    if (context && prev) {
-      const keys = new Set([...Object.keys(prev), ...Object.keys(context)])
-      for (const k of keys) {
-        if (JSON.stringify(prev[k]) !== JSON.stringify(context[k])) changedKeys.push(k)
-      }
-    }
+    const changes = context && prev ? diffContext(prev, context) : []
+    const changedKeys = changes.map((c) => c.key)
     return {
       node: h.node,
       enteredAt: h.enteredAt,
@@ -101,7 +96,24 @@ export function trailSteps(marble) {
       dwellMs: h.leftAt ? new Date(h.leftAt).getTime() - new Date(h.enteredAt).getTime() : null,
       context,
       changedKeys,
+      changes,
       live,
     }
   })
+}
+
+// Structured diff between two context snapshots, for the inspector's
+// per-step diff view: added / removed / changed keys with their values.
+export function diffContext(prev, cur) {
+  const out = []
+  const keys = new Set([...Object.keys(prev), ...Object.keys(cur)])
+  for (const k of keys) {
+    const b = JSON.stringify(prev[k])
+    const a = JSON.stringify(cur[k])
+    if (b === a) continue
+    if (b === undefined) out.push({ key: k, kind: "added", after: cur[k] })
+    else if (a === undefined) out.push({ key: k, kind: "removed", before: prev[k] })
+    else out.push({ key: k, kind: "changed", before: prev[k], after: cur[k] })
+  }
+  return out
 }

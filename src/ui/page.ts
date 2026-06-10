@@ -64,6 +64,16 @@ svg{width:100%;height:100%;display:block}
 .crumb .step.sel{background:#0f2630;outline:1px solid #1d4754}
 .crumb .step.sel b,.crumb .step.sel .now{color:var(--cyan)}
 .chg{color:var(--amber);font:10px monospace;margin:4px 0}
+.section{border:1px solid #1b2836;border-radius:9px;padding:10px;margin:12px 0}
+.section.decision{border-color:#3a2f5a;background:#120f1f}
+.sh{font-size:10px;color:var(--dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px}
+.section.decision .sh{color:var(--violet)}
+.diff{font:10.5px monospace;line-height:1.8;margin:6px 0}
+.dadd{color:var(--green)}
+.ddel{color:var(--red)}
+.dchg{color:var(--amber)}
+details.fullstate{margin-top:8px;font-size:10.5px;color:var(--dim)}
+details.fullstate summary{cursor:pointer}
 .pill{display:inline-block;padding:1px 8px;border-radius:20px;font-size:10.5px;
   font-family:monospace;border:1px solid currentColor}
 pre.json{background:#06090d;border:1px solid #15202b;border-radius:7px;padding:8px;

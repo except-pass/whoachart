@@ -37,19 +37,33 @@ function trailHtml(steps, sel) {
     .join(" \u203a ")}</div>`
 }
 
-// State time-travel: the context snapshot at the selected step, with the keys
-// that changed at that step called out.
+// State time-travel: diff-first view of what changed at the selected step,
+// with the full snapshot behind a disclosure.
+function diffLines(changes) {
+  if (!changes.length) return `<div class="chg" style="color:var(--dim)">no state changes at this step</div>`
+  return `<div class="diff">${changes
+    .map((c) => {
+      const v = (x) => escHtml(JSON.stringify(x))
+      if (c.kind === "added") return `<div class="dadd">+ ${escHtml(c.key)}: ${v(c.after)}</div>`
+      if (c.kind === "removed") return `<div class="ddel">− ${escHtml(c.key)} (was ${v(c.before)})</div>`
+      return `<div class="dchg">~ ${escHtml(c.key)}: ${v(c.before)} → ${v(c.after)}</div>`
+    })
+    .join("")}</div>`
+}
+
 function statePanel(m, steps, sel) {
   const s = steps[sel]
   if (!s) return `<pre class="json">${escHtml(JSON.stringify(m.context, null, 2))}</pre>`
-  const title = s.live ? `current state \u00b7 ${escHtml(s.node)}` : `state after ${escHtml(s.node)}`
-  const changed = s.changedKeys.length
-    ? `<div class="chg">changed here: ${s.changedKeys.map(escHtml).join(", ")}</div>`
-    : ""
-  const body = s.context
+  const title = s.live ? `current state · ${escHtml(s.node)}` : `state after ${escHtml(s.node)}`
+  if (!s.context) {
+    return `<div class="present"><span class="pk">${title}</span><div class="chg" style="color:var(--dim)">no snapshot for this step (recorded before time-travel existed)</div></div>`
+  }
+  // First step has no baseline — show the intake state in full instead of a diff.
+  const body = sel === 0
     ? `<pre class="json">${escHtml(JSON.stringify(s.context, null, 2))}</pre>`
-    : `<div class="chg" style="color:var(--dim)">no snapshot for this step (recorded before time-travel existed)</div>`
-  return `<div class="present" style="margin-top:10px"><span class="pk">${title}</span>${changed}${body}</div>`
+    : diffLines(s.changes) +
+      `<details class="fullstate"><summary>full state at this step</summary><pre class="json">${escHtml(JSON.stringify(s.context, null, 2))}</pre></details>`
+  return `<div class="present"><span class="pk">${sel === 0 ? `intake state · ${escHtml(s.node)}` : title}</span>${body}</div>`
 }
 
 function presentHtml(m, gate) {
@@ -117,14 +131,13 @@ export async function showMarble(id, gateInfo, api) {
       <b style="font-family:monospace">${escHtml(m.id)}</b>
       <span class="pill" style="color:${failed ? "var(--red)" : status === "blocked" ? "var(--violet)" : "var(--cyan)"}">${escHtml(status)}</span>
     </div>
-    ${trailHtml(steps, sel)}
     ${m.workpiece ? `<div class="kv"><span class="k">workpiece</span><span class="v">${escHtml(m.workpiece)}</span></div>` : ""}
     ${typeof m.context._session === "string" ? `<div class="kv"><span class="k">session</span><span class="v">${escHtml(m.context._session)}</span></div><button class="act violet" id="dFocus">⌖ open session on canvas</button>` : ""}
     ${failed ? `<pre class="json" style="color:#ffb4b4">${escHtml(m.error.split("\n")[0])}</pre><button class="act danger" id="dRetry">↻ retry</button>` : ""}
-    ${gateInfo ? presentHtml(m, gateInfo) : ""}
-    ${gateInfo ? decisionHtml(gateInfo) : ""}
-    <div id="dForm"></div>
-    ${statePanel(m, steps, sel)}
+    ${gateInfo ? `<div class="section decision"><div class="sh">⏳ decision required · ${escHtml(m.node)}</div>${presentHtml(m, gateInfo)}${decisionHtml(gateInfo)}<div id="dForm"></div></div>` : `<div id="dForm"></div>`}
+    <div class="section"><div class="sh">history · click a step</div>
+    ${trailHtml(steps, sel)}
+    ${statePanel(m, steps, sel)}</div>
   `
 
   el.querySelector("#dFocus")?.addEventListener("click", () => api.focusSession(id))

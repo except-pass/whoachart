@@ -17,6 +17,14 @@ export interface TrailStep {
   dwellMs: number | null
   context: Record<string, unknown> | null
   changedKeys: string[]
+  changes: ContextChange[]
   live: boolean
 }
 export function trailSteps(marble: { trail?: any[]; context?: Record<string, unknown> }): TrailStep[]
+export interface ContextChange {
+  key: string
+  kind: "added" | "removed" | "changed"
+  before?: unknown
+  after?: unknown
+}
+export function diffContext(prev: Record<string, unknown>, cur: Record<string, unknown>): ContextChange[]

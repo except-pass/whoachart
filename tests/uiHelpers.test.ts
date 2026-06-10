@@ -122,3 +122,25 @@ test("trailSteps: legacy hops without snapshots degrade gracefully", () => {
 test("trailSteps: no trail at all", () => {
   expect(trailSteps({ context: { x: 1 } })).toEqual([])
 })
+
+import { diffContext } from "../src/ui/public/helpers.js"
+
+test("diffContext reports added/removed/changed with values", () => {
+  const d = diffContext({ a: 1, b: "x", gone: true }, { a: 1, b: "y", fresh: [1] })
+  const by = Object.fromEntries(d.map((c: any) => [c.key, c]))
+  expect(by.b).toEqual({ key: "b", kind: "changed", before: "x", after: "y" })
+  expect(by.gone).toEqual({ key: "gone", kind: "removed", before: true })
+  expect(by.fresh).toEqual({ key: "fresh", kind: "added", after: [1] })
+  expect(by.a).toBeUndefined()
+})
+
+test("trailSteps carries structured changes", () => {
+  const steps = trailSteps({
+    context: { a: 2 },
+    trail: [
+      { node: "x", enteredAt: "t", leftAt: "t2", context: { a: 1 } },
+      { node: "y", enteredAt: "t2" },
+    ],
+  })
+  expect(steps[1].changes).toEqual([{ key: "a", kind: "changed", before: 1, after: 2 }])
+})
