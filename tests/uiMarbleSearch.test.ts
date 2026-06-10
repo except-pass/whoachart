@@ -137,3 +137,35 @@ test("mountMarbleSearch wires button + overlay, loads marbles, and rows click th
     ;(globalThis as any).fetch = prevFetch
   }
 })
+
+test("render path escapes hostile marble fields (XSS guard pinned)", async () => {
+  const win = new Window()
+  const doc = win.document
+  const prevDoc = (globalThis as any).document
+  const prevEvent = (globalThis as any).Event
+  const prevFetch = (globalThis as any).fetch
+  ;(globalThis as any).document = doc
+  ;(globalThis as any).Event = win.Event
+  try {
+    const bar = doc.createElement("div")
+    bar.className = "bar"
+    doc.body.appendChild(bar)
+
+    const XSS = `<img src=x onerror=alert(1)>`
+    const marbles = [{ id: XSS, node: XSS, status: "running", context: { evil: XSS }, createdAt: "2026-06-10T00:00:00Z" }]
+    ;(globalThis as any).fetch = async () => ({ ok: true, json: async () => ({ marbles }) })
+
+    mountMarbleSearch({ chart: "c", openMarble: () => {} })
+    doc.getElementById("msearchBtn")!.dispatchEvent(new win.Event("click"))
+    await new Promise((r) => setTimeout(r, 0))
+
+    const results = doc.querySelector(".msearch-results")!
+    expect(results.innerHTML).not.toContain(XSS) // raw payload never reaches the DOM verbatim (no attr reflection either)
+    expect(results.innerHTML).toContain("&lt;img") // it came back HTML-escaped instead
+    expect(results.querySelector("img")).toBeNull() // and no live <img> element was ever parsed
+  } finally {
+    ;(globalThis as any).document = prevDoc
+    ;(globalThis as any).Event = prevEvent
+    ;(globalThis as any).fetch = prevFetch
+  }
+})

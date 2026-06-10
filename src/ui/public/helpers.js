@@ -4,6 +4,7 @@
 // Deterministic vivid color per marble id (FNV-1a hash → hue), stable for the
 // marble's whole journey so an individual job is trackable across the graph.
 export function hue(id) {
+  id = id ?? "" // tolerate a malformed marble with no id (mirrors marbleHaystack)
   let h = 2166136261
   for (let i = 0; i < id.length; i++) {
     h ^= id.charCodeAt(i)

@@ -211,17 +211,23 @@ export function mountMarbleSearch({ chart, openMarble }) {
       resultsEl.innerHTML = `<div class="msearch-empty">${all.length ? "no marbles match" : "no marbles yet"}</div>`
       return
     }
+    // Row click-through keys off the row INDEX (data-i), not the id: that keeps
+    // untrusted marble data out of HTML attributes entirely, so a hostile id
+    // can't even sit inertly in an attribute value. Column text is escHtml'd.
     resultsEl.innerHTML =
       `<table class="msearch-tbl"><thead><tr><th>id</th><th>status</th><th>node</th><th>age</th></tr></thead><tbody>` +
-      rows.map((m) =>
-        `<tr class="msearch-row" data-id="${escHtml(m.id)}">` +
+      rows.map((m, i) =>
+        `<tr class="msearch-row" data-i="${i}">` +
         `<td><span class="msearch-dot" style="background:${hue(m.id)}"></span>${escHtml(m.id)}</td>` +
         `<td><span class="msearch-pill" style="color:${STATUS_COLOR[m.status] ?? "var(--ink)"}">${escHtml(m.status)}</span></td>` +
         `<td>${escHtml(m.node)}</td>` +
         `<td>${fmtAgeFull(m.createdAt, now)}</td></tr>`).join("") +
       `</tbody></table>`
     for (const tr of resultsEl.querySelectorAll(".msearch-row")) {
-      tr.addEventListener("click", () => { openMarble(tr.dataset.id); close() })
+      tr.addEventListener("click", () => {
+        const m = rows[Number(tr.dataset.i)]
+        if (m) { openMarble(m.id); close() }
+      })
     }
   }
 
