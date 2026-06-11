@@ -89,7 +89,8 @@ nodes:
         # Only a fully successful scan advances the window (set -e guards above).
         echo "$NOW_ISO" > "$STATE"
         NEXT=quiet; [ "$SPAWNED" -gt 0 ] && NEXT=done
-        jq -n --arg n "$NEXT" --arg w "$SINCE" --argjson f "$FOUND" --argjson s "$SPAWNED" \
+        # -c: the emit MUST be a single line (engine parses last stdout line only)
+        jq -cn --arg n "$NEXT" --arg w "$SINCE" --argjson f "$FOUND" --argjson s "$SPAWNED" \
           '{next: $n, merge: {window: $w, found: $f, spawned: $s}}'
 
   - id: triage
@@ -144,7 +145,8 @@ nodes:
               -H 'Content-Type: application/json' -d @- \
               "$JIRA_PROD_URL/rest/api/2/issue/$KEY/comment")
         CID=$(jq -r .id <<<"$RESP")
-        jq -n --arg u "$JIRA_PROD_URL/browse/$KEY?focusedCommentId=$CID" \
+        # -c: the emit MUST be a single line (engine parses last stdout line only)
+        jq -cn --arg u "$JIRA_PROD_URL/browse/$KEY?focusedCommentId=$CID" \
           '{merge: {posted_url: $u}}'
 
   - id: quiet-day
