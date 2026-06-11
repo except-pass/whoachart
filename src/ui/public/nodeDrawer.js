@@ -96,7 +96,12 @@ function pumpLogs(nodeId, api) {
   // throughout. A node switch rebuilds #nodeLiveOutput into a NEW element with its
   // own _busy/_since; a re-query in .then/.finally would clobber that new element
   // (clearing its _busy mid-flight → double fetch, or appending stale lines).
-  Promise.resolve(api.nodeLogs(nodeId, since))
+  // .then(() => api.nodeLogs(...)), not Promise.resolve(api.nodeLogs(...)): a
+  // synchronous throw from nodeLogs then still routes through .catch/.finally and
+  // releases _busy. An eager call would escape the chain and wedge the feed (_busy
+  // stuck true until a node switch rebuilds the container).
+  Promise.resolve()
+    .then(() => api.nodeLogs(nodeId, since))
     .then((res) => {
       if (!res || body().querySelector("#nodeLiveOutput") !== c) return // c detached by a switch
       appendLogLines(c, res.lines)

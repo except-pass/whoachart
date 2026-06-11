@@ -129,9 +129,10 @@ export function createControlApi(daemon: Daemon, port: number, opts: ControlApiO
         }
 
         // Live-output delta for one node (inspector live feed). since defaults to
-        // 0 (NaN-safe); the ring bound keeps that cheap. ?marble= filters to one.
+        // 0 (NaN-safe) and is clamped non-negative — a negative ?since is truthy
+        // and would otherwise match every ring entry ("replay everything").
         if (p[0] === "api" && p[1] === "charts" && p[2] && p[3] === "nodes" && p[4] && p[5] === "logs" && req.method === "GET") {
-          const since = Number(url.searchParams.get("since")) || 0
+          const since = Math.max(0, Number(url.searchParams.get("since")) || 0)
           const marble = url.searchParams.get("marble") ?? undefined
           return json(daemon.logsSince(p[2], decodeURIComponent(p[4]), since, marble))
         }

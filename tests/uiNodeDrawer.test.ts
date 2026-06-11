@@ -206,6 +206,7 @@ test("a fetch in flight during a node switch can't clobber the new node's _busy 
 
   showNode("build", DEF, { live: [], stats: {}, ends: {} }, api) // build fetch pending
   showNode("review", DEF, { live: [], stats: {}, ends: {} }, api) // switch: review container, review fetch pending
+  await flush() // nodeLogs is dispatched one microtask later (sync-throw guard) → let both calls land in `resolvers`
   const reviewC = el.querySelector("#nodeLiveOutput") as any
   expect(reviewC._busy).toBe(true) // review fetch in flight
 

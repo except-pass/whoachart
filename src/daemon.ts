@@ -254,6 +254,10 @@ export class Daemon {
   private ensureWidgetLoop(chart: Chart, retryMs = 15_000): void {
     const url = `${this.publicUrl}/ui/charts/${chart.name}`
     const attempt = (): void => {
+      // Bail if the chart was deleted (or replaced) while a retry was pending —
+      // otherwise a deleted chart whose widget never landed retries forever,
+      // logging under the dead name. The runtime map is the liveness source.
+      if (!this.runtimes.has(chart.name)) return
       this.opts.client.ensureBrowserWidget({ url, title: `whoachart-${chart.name}` }).then(
         () => logLine(chart.name, `widget ensured url=${url}`),
         (err) => {

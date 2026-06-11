@@ -329,6 +329,26 @@ test("a reload whose rebuild throws revives the old chart and returns 503", asyn
   expect(parked.node).toBe("gate")
 })
 
+test("a reload whose engine never quiesces revives the old chart and returns 503", async () => {
+  // The OTHER 503 path: engine.stop() rejecting (a node that won't settle) — distinct
+  // from the rebuild-throws path above. Both must revive the old runtime, not wedge it.
+  const rt = (daemon as any).runtimes.get("storey")
+  const origStop = rt.engine.stop.bind(rt.engine)
+  rt.engine.stop = async () => { throw new Error("did not quiesce") }
+  let status = 0
+  try {
+    await daemon.updateChart("storey", GATE_CHART_SAFE_EDIT)
+  } catch (err) {
+    status = (err as { status?: number }).status ?? 0
+  }
+  expect(status).toBe(503)
+  rt.engine.stop = origStop
+  // revived via resume() — the old chart still serves and a submit reaches the gate
+  const m = await daemon.submit("storey", {})
+  const parked = await waitForStatus(() => daemon.marble("storey", m.id), "blocked")
+  expect(parked.node).toBe("gate")
+})
+
 test("boot-loads a legacy .yml chart without crashing (read/path honor .yml)", async () => {
   clearRegistry(); registerBuiltins()
   const root = await mkdtemp(join(tmpdir(), "wc-yml-"))

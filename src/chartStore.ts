@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, writeFile, rename } from "node:fs/promises"
+import { mkdir, readdir, readFile, writeFile, rename, unlink } from "node:fs/promises"
 import { join } from "node:path"
 
 // HTTP-shaped error for the chart-store CRUD path. The control API maps `status`
@@ -42,7 +42,12 @@ async function fileExists(path: string): Promise<boolean> {
 export async function atomicWrite(path: string, content: string): Promise<void> {
   const tmp = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`
   await writeFile(tmp, content)
-  await rename(tmp, path)
+  try {
+    await rename(tmp, path)
+  } catch (err) {
+    await unlink(tmp).catch(() => {}) // don't orphan the tmp file if the rename fails
+    throw err
+  }
 }
 
 // Server-owned directory of chart *.yaml files. Separate concern from the marble
