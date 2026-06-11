@@ -155,6 +155,50 @@ nodes:
       - { key: feedback, as: text }
     config: {}
 
+  # Breakout: spin up a Tinstar task + session for the ticket (the /workon
+  # skill's mechanics: dev epic, task-<key>, session named <key>, bugsearcher
+  # hand for Bugs). The marble ends here — the work continues in Tinstar.
+  - id: spawn-workon
+    type: shell
+    name: Spawn workon
+    timeout: 60000 # ms
+    config:
+      on_enter: |
+        set -euo pipefail
+        eval "$(clavis get jira/prod)"
+        TINSTAR="${TINSTAR_DASHBOARD_URL:-http://localhost:5273}"
+        KEY=$(jq -r .key "$WHOACHART_CONTEXT")
+        SUMMARY=$(jq -r .summary "$WHOACHART_CONTEXT")
+        URL=$(jq -r .url "$WHOACHART_CONTEXT")
+        LKEY=$(tr 'A-Z' 'a-z' <<<"$KEY")
+
+        ITYPE=$(curl -sf -u "$JIRA_PROD_EMAIL:$JIRA_PROD_TOKEN" \
+          "$JIRA_PROD_URL/rest/api/2/issue/$KEY?fields=issuetype" | jq -r .fields.issuetype.name)
+        EPIC=$(curl -sf "$TINSTAR/api/state" \
+          | jq -re '[.epics[] | select((.name|ascii_downcase)=="dev")][0].id')
+
+        # Task may already exist from an earlier workon — tolerate a refusal.
+        jq -cn --arg id "task-$LKEY" --arg n "$KEY: $SUMMARY" --arg e "$EPIC" --arg u "$URL" \
+          '{id:$id, name:$n, epicId:$e, externalUrl:$u}' \
+          | curl -s -X POST "$TINSTAR/api/tasks" -H 'Content-Type: application/json' -d @- >/dev/null || true
+
+        HAND=null
+        PROMPT="Read and understand Jira ticket $KEY: $SUMMARY. Use the jira MCP tool to fetch full details. Summarize: what is the ask, what components are involved, and what is the acceptance criteria. Then propose an approach."
+        if [ "$ITYPE" = "Bug" ]; then
+          HAND='"bugsearcher"'
+          PROMPT="Investigate Jira bug $KEY: $SUMMARY. Use the jira MCP tool to fetch full details including comments and attachments. Your job is to diagnose the root cause — find where and why it fails. Do NOT fix it yet. Deliver a bug diagnosis with reproduction steps, root cause location, and failure path."
+        fi
+
+        jq -cn --arg n "$LKEY" --arg t "task-$LKEY" --arg p "$PROMPT" --argjson h "$HAND" \
+          '{name:$n, backend:"tmux", cliTemplate:"Claude (multi-agent)", project:"cmsandbox",
+            worktree:true, taskId:$t, hand:$h, prompt:$p}' \
+          | curl -sf -X POST "$TINSTAR/api/sessions" -H 'Content-Type: application/json' -d @- >/dev/null
+
+        # -c: the emit MUST be a single line (engine parses last stdout line only)
+        jq -cn --arg s "$LKEY" --arg t "task-$LKEY" --arg i "$ITYPE" \
+          '{merge: {workon_session: $s, workon_task: $t,
+                    workon_hand: (if $i == "Bug" then "bugsearcher" else "none" end)}}'
+
   - id: post-comment
     type: shell
     name: Post to Jira
@@ -198,6 +242,11 @@ nodes:
     name: Skipped
     config: { outcome: warning }
 
+  - id: working
+    type: end
+    name: In Tinstar
+    config: { outcome: success }
+
 edges:
   - { from: scan, to: query-jira }
   - { from: query-jira, to: quiet-day, name: quiet }
@@ -209,4 +258,6 @@ edges:
   - { from: review, to: triage, name: revise,
       form: [ { key: feedback, type: textarea, required: true } ] }
   - { from: review, to: skipped, name: skip }
+  - { from: review, to: spawn-workon, name: workon }
+  - { from: spawn-workon, to: working }
   - { from: post-comment, to: posted }
