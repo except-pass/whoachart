@@ -1,0 +1,185 @@
+# examples/jira-morning.yaml
+#
+# Morning Jira triage. Will manually submits a scan (UI or curl); it finds
+# issues needing his attention since the last scan (assigned-to-him updated,
+# or mentioning him) and spawns ONE MARBLE PER ISSUE at start=triage. An
+# agent triages and drafts a reply, Will approves/revises/skips at the human
+# gate, approved drafts are posted back to Jira.
+#
+# Trigger: manual only (no cron) — design: docs/superpowers/specs/2026-06-11-jira-morning-chart-design.md
+# Secrets: scripts run `eval "$(clavis get jira/prod)"` at runtime; creds
+#          never appear in this file or in marble context.
+# State:   ~/.local/state/whoachart/jira-morning.last — ISO time of the last
+#          SUCCESSFUL scan; written only after a scan completes, so a failed
+#          scan or skipped weekend is covered by the next run's window.
+name: jira-morning
+nodes:
+  - id: scan
+    type: source
+    name: Morning scan
+    config:
+      trigger: api
+      form:
+        - { key: since, type: text, label: "Since (24h, 3d, or ISO time; blank = last scan)" }
+
+  - id: query-jira
+    type: shell
+    name: Query Jira
+    timeout: 180
+    config:
+      on_enter: |
+        set -euo pipefail
+        eval "$(clavis get jira/prod)"
+        AUTH="$JIRA_PROD_EMAIL:$JIRA_PROD_TOKEN"
+        BASE="http://localhost:${WHOACHART_PORT:-5330}"
+        STATE_DIR="$HOME/.local/state/whoachart"
+        STATE="$STATE_DIR/jira-morning.last"
+        mkdir -p "$STATE_DIR"
+        NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+        # Window: explicit form value > last-scan state file > 24h.
+        SINCE=$(jq -r '.since // empty' "$WHOACHART_CONTEXT")
+        [ -z "$SINCE" ] && [ -f "$STATE" ] && SINCE=$(cat "$STATE")
+        [ -z "$SINCE" ] && SINCE="24h"
+        # Normalize to a JQL time. Relative forms pass through; ISO/state
+        # timestamps become a JQL datetime in machine-local time (Jira
+        # evaluates datetimes in Will's Jira TZ — slight skew over-includes,
+        # which dedupe + agent triage absorb).
+        case "$SINCE" in
+          -*) JQLT="$SINCE" ;;
+          *[hdwm]) JQLT="-$SINCE" ;;
+          *) JQLT="\"$(date -d "$SINCE" +"%Y-%m-%d %H:%M")\"" ;;
+        esac
+
+        ME=$(curl -sf -u "$AUTH" "$JIRA_PROD_URL/rest/api/3/myself" | jq -r .accountId)
+        JQL="((assignee = currentUser() AND updated >= $JQLT) OR (comment ~ currentUser() AND updated >= $JQLT)) ORDER BY updated DESC"
+        ISSUES=$(curl -sf -u "$AUTH" -G "$JIRA_PROD_URL/rest/api/3/search/jql" \
+          --data-urlencode "jql=$JQL" \
+          --data-urlencode "fields=key,summary,status,assignee,reporter,updated" \
+          --data-urlencode "maxResults=50")
+        FOUND=$(jq '.issues | length' <<<"$ISSUES")
+        [ "$FOUND" -eq 50 ] && echo "WARNING: hit maxResults=50 cap; widen manually if needed" >&2
+
+        # Dedupe: never spawn for an issue that already has a live marble.
+        LIVE=$(curl -sf "$BASE/api/charts/jira-morning/marbles" \
+          | jq -c '[.marbles[] | select(.status == "queued" or .status == "running" or .status == "blocked") | .context.key // empty]')
+
+        SPAWNED=0
+        while IFS= read -r row; do
+          KEY=$(jq -r .key <<<"$row")
+          if jq -e --arg k "$KEY" 'index($k)' <<<"$LIVE" >/dev/null; then
+            echo "dedupe: $KEY already live, skipping" >&2
+            continue
+          fi
+          jq -n --argjson i "$row" --arg me "$ME" --arg url "$JIRA_PROD_URL" '
+            { start: "triage",
+              context: {
+                key: $i.key,
+                summary: $i.fields.summary,
+                url: ($url + "/browse/" + $i.key),
+                reason: (if (($i.fields.assignee.accountId // "") == $me) then "assigned-update" else "mention" end),
+                status: ($i.fields.status.name // ""),
+                reporter: ($i.fields.reporter.displayName // ""),
+                updated: $i.fields.updated } }' \
+            | curl -sf -X POST "$BASE/api/charts/jira-morning/marbles" \
+                -H 'Content-Type: application/json' -d @- >/dev/null
+          SPAWNED=$((SPAWNED+1))
+        done < <(jq -c '.issues[]' <<<"$ISSUES")
+
+        # Only a fully successful scan advances the window (set -e guards above).
+        echo "$NOW_ISO" > "$STATE"
+        NEXT=quiet; [ "$SPAWNED" -gt 0 ] && NEXT=done
+        jq -n --arg n "$NEXT" --arg w "$SINCE" --argjson f "$FOUND" --argjson s "$SPAWNED" \
+          '{next: $n, merge: {window: $w, found: $f, spawned: $s}}'
+
+  - id: triage
+    type: agent
+    name: Triage + draft
+    color: "#60a5fa"
+    stuck_after: 1800
+    config:
+      brief: >
+        A Jira issue needs morning triage for Will (williamg@fortresspower.com).
+        The marble context has key/url/reason. Fetch the LIVE issue and full
+        comment thread before judging anything: run eval "$(clavis get jira/prod)"
+        then curl -s -u "$JIRA_PROD_EMAIL:$JIRA_PROD_TOKEN"
+        "$JIRA_PROD_URL/rest/api/2/issue/KEY" and
+        "$JIRA_PROD_URL/rest/api/2/issue/KEY/comment" (substitute the context
+        key for KEY). Decide whether this needs a reply from Will. If NO (bare
+        status/field change, FYI traffic, thread already resolved, or the last
+        word is already Will's): signal next=fyi with merge
+        {"triage_note": "<one sentence why>"}. If YES: write the reply Will
+        should post — plain text (Jira wiki markup OK), concrete and brief,
+        in a direct engineer-to-engineer voice — and signal next=review with
+        merge {"draft": "<the comment>", "rationale": "<one sentence why a
+        reply is needed>"}. If the context contains "feedback", this is a
+        redraft of the existing "draft": honor the feedback over your own
+        judgment and signal next=review again. NEVER post to Jira yourself —
+        the chart posts only after human approval.
+
+  - id: review
+    type: human
+    name: Will reviews
+    present:
+      - { key: key, as: text }
+      - { key: summary, as: text }
+      - { key: url, as: link }
+      - { key: reason, as: text }
+      - { key: rationale, as: text }
+      - { key: draft, as: markdown }
+      - { key: feedback, as: text }
+    config: {}
+
+  - id: post-comment
+    type: shell
+    name: Post to Jira
+    timeout: 60
+    config:
+      on_enter: |
+        set -euo pipefail
+        eval "$(clavis get jira/prod)"
+        KEY=$(jq -r .key "$WHOACHART_CONTEXT")
+        RESP=$(jq '{body: .draft}' "$WHOACHART_CONTEXT" \
+          | curl -sf -u "$JIRA_PROD_EMAIL:$JIRA_PROD_TOKEN" \
+              -H 'Content-Type: application/json' -d @- \
+              "$JIRA_PROD_URL/rest/api/2/issue/$KEY/comment")
+        CID=$(jq -r .id <<<"$RESP")
+        jq -n --arg u "$JIRA_PROD_URL/browse/$KEY?focusedCommentId=$CID" \
+          '{merge: {posted_url: $u}}'
+
+  - id: quiet-day
+    type: end
+    name: Quiet day
+    config: { outcome: success }
+
+  - id: scan-done
+    type: end
+    name: Scan done
+    config: { outcome: success }
+
+  - id: fyi
+    type: end
+    name: FYI only
+    config: { outcome: success }
+
+  - id: posted
+    type: end
+    name: Posted
+    config: { outcome: success }
+
+  - id: skipped
+    type: end
+    name: Skipped
+    config: { outcome: warning }
+
+edges:
+  - { from: scan, to: query-jira }
+  - { from: query-jira, to: quiet-day, name: quiet }
+  - { from: query-jira, to: scan-done, name: done }
+  - { from: triage, to: review, name: review }
+  - { from: triage, to: fyi, name: fyi }
+  - { from: review, to: post-comment, name: approve }
+  - { from: review, to: triage, name: revise,
+      form: [ { key: feedback, type: textarea, required: true } ] }
+  - { from: review, to: skipped, name: skip }
+  - { from: post-comment, to: posted }
