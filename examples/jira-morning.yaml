@@ -25,7 +25,7 @@ nodes:
   - id: query-jira
     type: shell
     name: Query Jira
-    timeout: 180
+    timeout: 180000 # ms
     config:
       on_enter: |
         set -euo pipefail
@@ -133,7 +133,7 @@ nodes:
   - id: post-comment
     type: shell
     name: Post to Jira
-    timeout: 60
+    timeout: 60000 # ms
     config:
       on_enter: |
         set -euo pipefail
