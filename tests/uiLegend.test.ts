@@ -49,6 +49,15 @@ test("swatchSvg renders the label INSIDE the shape (centered text), not beside i
   expect(svg).toContain('y="30"') // H/2 — vertically centered
   // no label arg → no stray empty <text> node
   expect(swatchSvg("rect")).not.toContain("<text")
+  // self-contained centering: anchor attrs on the element, not only via CSS
+  expect(svg).toContain('text-anchor="middle"')
+})
+
+test("swatchSvg escapes the label (no raw HTML even if a label ever carries markup)", () => {
+  const svg = swatchSvg("rect", '<b>x</b>&"')
+  expect(svg).not.toContain("<b>")
+  expect(svg).toContain("&lt;b&gt;")
+  expect(svg).toContain("&amp;")
 })
 
 test("legendHtml is empty when nothing to explain, populated otherwise", () => {

@@ -6,7 +6,7 @@
 //
 // Self-contained: this module injects its own panel + styles into #canvas, so
 // the shared shell (page.ts) needs no edits. app.js only calls initLegend().
-import { shapeForType } from "./helpers.js"
+import { shapeForType, escHtml } from "./helpers.js"
 
 // Render order + human labels for each shape. Only shapes that actually occur in
 // the chart are shown, so a graph with no decisions doesn't advertise diamonds.
@@ -47,7 +47,14 @@ export function swatchSvg(shape, label = "") {
     const rx = shape === "stadium" ? h / 2 : 11
     inner = `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}"/>`
   }
-  const text = label ? `<text class="lgswtext" x="${W / 2}" y="${H / 2}">${label}</text>` : ""
+  // escHtml: labels are a fixed vocabulary today, but the signature takes an
+  // arbitrary string — escape so the swatch is safe regardless of provenance
+  // (matches lintPanel/marbleSearch). text-anchor/dominant-baseline are set on
+  // the element itself, not just .lgswtext, so the swatch centers correctly even
+  // if serialized outside the styled panel.
+  const text = label
+    ? `<text class="lgswtext" x="${W / 2}" y="${H / 2}" text-anchor="middle" dominant-baseline="central">${escHtml(label)}</text>`
+    : ""
   return `<svg class="lgswatch" viewBox="0 0 ${W} ${H}" width="92" height="37" aria-hidden="true">${inner}${text}</svg>`
 }
 
