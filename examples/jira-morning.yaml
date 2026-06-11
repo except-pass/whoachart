@@ -2,9 +2,10 @@
 #
 # Morning Jira triage. Will manually submits a scan (UI or curl); it finds
 # issues needing his attention since the last scan (assigned-to-him updated,
-# or mentioning him) and spawns ONE MARBLE PER ISSUE at start=triage. An
-# agent triages and drafts a reply, Will approves/revises/skips at the human
-# gate, approved drafts are posted back to Jira.
+# or mentioning him) and spawns ONE MARBLE PER ISSUE at start=triage-intake
+# (a source node: its form is the lane's typed interface, validated on
+# submit). An agent triages and drafts a reply, Will approves/revises/skips
+# at the human gate, approved drafts are posted back to Jira.
 #
 # Trigger: manual only (no cron) — design: docs/superpowers/specs/2026-06-11-jira-morning-chart-design.md
 # Secrets: scripts run `eval "$(clavis get jira/prod)"` at runtime; creds
@@ -78,7 +79,7 @@ nodes:
             continue
           fi
           jq -n --argjson i "$row" --arg me "$ME" --arg url "$JIRA_PROD_URL" '
-            { start: "triage",
+            { start: "triage-intake",
               context: {
                 key: $i.key,
                 summary: $i.fields.summary,
@@ -98,6 +99,23 @@ nodes:
         # -c: the emit MUST be a single line (engine parses last stdout line only)
         jq -cn --arg n "$NEXT" --arg w "$SINCE" --argjson f "$FOUND" --argjson s "$SPAWNED" \
           '{next: $n, merge: {window: $w, found: $f, spawned: $s}}'
+
+  # Entry point of the per-issue lane. A source node so (a) lint roots the
+  # lane's reachability here and (b) the form below is a typed, validated
+  # interface for injected marbles (submit with start=triage-intake).
+  - id: triage-intake
+    type: source
+    name: Issue intake
+    config:
+      trigger: api
+      form:
+        - { key: key, type: text, required: true }
+        - { key: summary, type: text, required: true }
+        - { key: url, type: text, required: true }
+        - { key: reason, type: enum, options: [assigned-update, mention], required: true }
+        - { key: status, type: text }
+        - { key: reporter, type: text }
+        - { key: updated, type: text }
 
   - id: triage
     type: agent
@@ -184,6 +202,7 @@ edges:
   - { from: scan, to: query-jira }
   - { from: query-jira, to: quiet-day, name: quiet }
   - { from: query-jira, to: scan-done, name: done }
+  - { from: triage-intake, to: triage }
   - { from: triage, to: review, name: review }
   - { from: triage, to: fyi, name: fyi }
   - { from: review, to: post-comment, name: approve }
