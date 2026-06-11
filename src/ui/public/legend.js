@@ -33,8 +33,11 @@ export function legendEntries(def) {
 // small via the SVG viewport. Because it's the same coordinates/rx the canvas
 // uses (stadium rx = h/2, step rx = 11, diamond = side-midpoint vertices — see
 // nodeShape() in app.js), the swatch is a faithful scale model, not an
-// approximation that could disagree with the rendered node.
-export function swatchSvg(shape) {
+// approximation that could disagree with the rendered node. The label rides
+// INSIDE the shape, centered — exactly how a real node carries its text — so the
+// swatch reads as a miniature node rather than an empty outline with a caption
+// floating beside (and, previously, spilling outside) it.
+export function swatchSvg(shape, label = "") {
   const W = 150, H = 60, x = 4, y = 4, w = W - 8, h = H - 8
   let inner
   if (shape === "diamond") {
@@ -44,19 +47,21 @@ export function swatchSvg(shape) {
     const rx = shape === "stadium" ? h / 2 : 11
     inner = `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}"/>`
   }
-  return `<svg class="lgswatch" viewBox="0 0 ${W} ${H}" width="42" height="17" aria-hidden="true">${inner}</svg>`
+  const text = label ? `<text class="lgswtext" x="${W / 2}" y="${H / 2}">${label}</text>` : ""
+  return `<svg class="lgswatch" viewBox="0 0 ${W} ${H}" width="92" height="37" aria-hidden="true">${inner}${text}</svg>`
 }
 
 // Pure panel markup for a def. Empty string when the chart has no nodes (nothing
-// to explain) so init can skip injecting an empty box.
+// to explain) so init can skip injecting an empty box. Each row is the labeled
+// swatch plus the node types that map to it; the types stay inside the panel
+// (they wrap rather than overflow — the bug this layout replaces).
 export function legendHtml(def) {
   const entries = legendEntries(def)
   if (!entries.length) return ""
   const rows = entries
     .map(
       (e) =>
-        `<div class="lgrow">${swatchSvg(e.shape)}` +
-        `<span class="lglabel">${e.label}</span>` +
+        `<div class="lgrow">${swatchSvg(e.shape, e.label)}` +
         `<span class="lgtypes">${e.types.join(" · ")}</span></div>`,
     )
     .join("")
@@ -68,19 +73,21 @@ const STYLE_ID = "whoachart-legend-style"
 const CSS = `
 .legend{position:absolute;top:12px;left:12px;z-index:20;background:rgba(14,20,29,.92);
   border:1px solid var(--line);border-radius:9px;padding:6px 8px;font-size:11px;
-  color:var(--ink);box-shadow:0 4px 14px rgba(0,0,0,.35);max-width:230px;user-select:none}
+  color:var(--ink);box-shadow:0 4px 14px rgba(0,0,0,.35);width:max-content;max-width:200px;
+  overflow:hidden;user-select:none}
 .legend.collapsed .lgbody{display:none}
 .lghead{display:flex;align-items:center;justify-content:space-between;gap:10px;
   font:10px monospace;letter-spacing:1px;text-transform:uppercase;color:var(--dim)}
 .lgtoggle{border:none;background:none;color:var(--dim);cursor:pointer;font:14px monospace;
   line-height:1;padding:0 2px}
 .lgtoggle:hover{color:var(--cyan)}
-.lgbody{margin-top:6px;display:flex;flex-direction:column;gap:5px}
-.lgrow{display:flex;align-items:center;gap:8px}
-.lgswatch{flex:0 0 auto}
+.lgbody{margin-top:6px;display:flex;flex-direction:column;gap:9px}
+.lgrow{display:flex;flex-direction:column;align-items:center;gap:2px}
+.lgswatch{flex:0 0 auto;width:108px;height:43px}
 .lgswatch rect,.lgswatch polygon{fill:var(--node);stroke:#3a4a5a;stroke-width:3}
-.lglabel{color:var(--ink);font-weight:600}
-.lgtypes{color:var(--dim);font:9.5px monospace;margin-left:auto;text-align:right}
+.lgswtext{fill:var(--ink);font:600 21px system-ui,sans-serif;text-anchor:middle;dominant-baseline:central}
+.lgtypes{max-width:108px;color:var(--dim);font:9px monospace;text-align:center;
+  white-space:normal;overflow-wrap:anywhere}
 `
 
 function ensureStyle() {

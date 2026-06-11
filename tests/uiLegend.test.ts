@@ -40,10 +40,24 @@ test("swatchSvg uses the same geometry the canvas uses (stadium pill vs step rx 
   expect(swatchSvg("diamond")).not.toContain("<rect")
 })
 
+test("swatchSvg renders the label INSIDE the shape (centered text), not beside it", () => {
+  const svg = swatchSvg("stadium", "terminal")
+  // a <text> element carrying the label, centered on the 150×60 model box
+  expect(svg).toContain("<text")
+  expect(svg).toContain(">terminal</text>")
+  expect(svg).toContain('x="75"') // W/2 — horizontally centered
+  expect(svg).toContain('y="30"') // H/2 — vertically centered
+  // no label arg → no stray empty <text> node
+  expect(swatchSvg("rect")).not.toContain("<text")
+})
+
 test("legendHtml is empty when nothing to explain, populated otherwise", () => {
   expect(legendHtml({ nodes: [] })).toBe("")
   const html = legendHtml(def)
   expect(html).toContain("shapes")
   expect(html).toContain("decision")
   expect(html).toContain("terminal")
+  // the label lives inside the swatch's <text>, not in a separate caption span
+  expect(html).toContain(">terminal</text>")
+  expect(html).not.toContain("lglabel")
 })
