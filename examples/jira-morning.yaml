@@ -60,15 +60,21 @@ nodes:
         FOUND=$(jq '.issues | length' <<<"$ISSUES")
         [ "$FOUND" -eq 50 ] && echo "WARNING: hit maxResults=50 cap; widen manually if needed" >&2
 
-        # Dedupe: never spawn for an issue that already has a live marble.
-        LIVE=$(curl -sf "$BASE/api/charts/jira-morning/marbles" \
-          | jq -c '[.marbles[] | select(.status == "queued" or .status == "running" or .status == "blocked") | .context.key // empty]')
+        # Dedupe: skip an issue if it already has a live marble, OR if any
+        # past marble saw the same `updated` stamp (issue unchanged since the
+        # last triage — covers re-scans over a window that was already worked).
+        SEEN=$(curl -sf "$BASE/api/charts/jira-morning/marbles" \
+          | jq -c '[.marbles[] | select(.context.key) |
+              { key: .context.key, updated: (.context.updated // ""),
+                live: (.status == "queued" or .status == "running" or .status == "blocked") }]')
 
         SPAWNED=0
         while IFS= read -r row; do
           KEY=$(jq -r .key <<<"$row")
-          if jq -e --arg k "$KEY" 'index($k)' <<<"$LIVE" >/dev/null; then
-            echo "dedupe: $KEY already live, skipping" >&2
+          UPD=$(jq -r .fields.updated <<<"$row")
+          if jq -e --arg k "$KEY" --arg u "$UPD" \
+               'any(.[]; .key == $k and (.live or .updated == $u))' <<<"$SEEN" >/dev/null; then
+            echo "dedupe: $KEY already live or unchanged, skipping" >&2
             continue
           fi
           jq -n --argjson i "$row" --arg me "$ME" --arg url "$JIRA_PROD_URL" '
