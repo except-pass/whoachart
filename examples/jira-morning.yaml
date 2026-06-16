@@ -13,6 +13,8 @@
 #   docs/superpowers/specs/2026-06-16-jira-morning-cheap-triage-spawn-on-click-design.md
 # Secrets: scripts run `eval "$(clavis get jira/prod)"` at runtime; creds
 #          never appear in this file or in marble context.
+# Trust:   ticket-derived text (summary/title) reaches LLM prompts unsanitized
+#          in triage and spawn-workon; the human review gate is not the only boundary.
 # State:   ~/.local/state/whoachart/jira-morning.last — ISO time of the last
 #          SUCCESSFUL scan; written only after a scan completes, so a failed
 #          scan or skipped weekend is covered by the next run's window.
@@ -48,7 +50,7 @@ nodes:
         # Normalize to a JQL time. Relative forms pass through; ISO/state
         # timestamps become a JQL datetime in machine-local time (Jira
         # evaluates datetimes in Will's Jira TZ — slight skew over-includes,
-        # which dedupe + agent triage absorb).
+        # which dedupe + cheap triage absorb).
         case "$SINCE" in
           -*) JQLT="$SINCE" ;;
           *[hdwm]) JQLT="-$SINCE" ;;
@@ -137,7 +139,7 @@ nodes:
         eval "$(clavis get jira/prod)"
         # issue_type captured here so spawn-workon needn't re-fetch Jira.
         ITYPE=$(curl -sf -u "$JIRA_PROD_EMAIL:$JIRA_PROD_TOKEN" \
-          "$JIRA_PROD_URL/rest/api/2/issue/$KEY?fields=issuetype" | jq -r .fields.issuetype.name)
+          "$JIRA_PROD_URL/rest/api/2/issue/$KEY?fields=issuetype" 2>/dev/null | jq -r '.fields.issuetype.name // ""' 2>/dev/null || echo "")
 
         PROMPT="Triage Jira issue $KEY: $SUMMARY (reason: $REASON). Use the Atlassian Jira MCP tools (e.g. mcp__atlassian__getJiraIssue) to fetch the issue and its full comment thread. Decide whether this needs Will's attention. It does NOT if it is a bare status/field change, FYI traffic, an already-resolved thread, or the last word is already Will's. Reply with EXACTLY ONE LINE of JSON and nothing else: {\"attention\": true|false, \"why\": \"<one sentence>\"}"
 
