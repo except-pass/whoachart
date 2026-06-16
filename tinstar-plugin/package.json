@@ -1,0 +1,48 @@
+{
+  "name": "whoachart",
+  "version": "0.1.0",
+  "description": "Tinstar browser widget that opens whoachart chart canvases.",
+  "private": true,
+  "type": "module",
+  "main": "dist/tinstar-plugin.js",
+  "peerDependencies": {
+    "@tinstar/plugin-api": "^5.0.0",
+    "react": "^18 || ^19"
+  },
+  "devDependencies": {
+    "@tinstar/plugin-api": "file:../../tinstar/packages/plugin-api",
+    "@types/react": "^19.0.0",
+    "esbuild": "^0.23.0",
+    "react": "^19.0.0",
+    "typescript": "^5.4.0"
+  },
+  "tinstar": {
+    "apiVersion": "5",
+    "displayName": "Whoachart",
+    "description": "Marble-chart canvas in a browser widget, with a chart picker.",
+    "contributes": {
+      "widgets": [
+        {
+          "type": "whoachart-chart",
+          "label": "Whoachart",
+          "icon": "icon.svg",
+          "primitive": "browser",
+          "defaultSize": {
+            "width": 1100,
+            "height": 700
+          }
+        }
+      ]
+    },
+    "permissions": [],
+    "server": {
+      "health": "curl -sf localhost:5330/api/charts -o /dev/null",
+      "start": "bun run start",
+      "cwd": ".."
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/tinstar-plugin.tsx --bundle --format=esm --platform=browser --external:@tinstar/plugin-api --external:react --external:react-dom --outfile=dist/tinstar-plugin.js",
+    "typecheck": "tsc --noEmit"
+  }
+}
