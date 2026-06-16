@@ -139,7 +139,7 @@ export class TinstarClient implements ArtifactSink, SessionLauncher, CanvasContr
     // frontend resolves the focus directive by matching run.sessionId. If the
     // run is gone, the broadcast would silently no-op, so report it instead.
     const state = await fetch(`${this.baseUrl}/api/state`)
-      .then((r) => r.json() as Promise<{ runs?: Array<{ sessionId?: string }> }>)
+      .then((r) => (r.ok ? (r.json() as Promise<{ runs?: Array<{ sessionId?: string }> }>) : Promise.reject(new Error(`state ${r.status}`))))
       .catch(() => null)
     if (!state) return "unreachable"
     if (!(state.runs ?? []).some((r) => r?.sessionId === sessionName)) return "no-run"

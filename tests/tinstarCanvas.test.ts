@@ -7,17 +7,19 @@ let base: string
 let widgets: any[] = []
 let viewportCalls: any[] = []
 let runs: any[] = []
+let stateStatus = 200
 
 beforeEach(() => {
   widgets = []
   viewportCalls = []
   runs = []
+  stateStatus = 200
   server = Bun.serve({
     port: 0,
     async fetch(req) {
       const url = new URL(req.url)
       if (req.method === "GET" && url.pathname === "/api/state") {
-        return Response.json({ browserWidgets: widgets, runs })
+        return Response.json({ browserWidgets: widgets, runs }, { status: stateStatus })
       }
       if (req.method === "POST" && url.pathname === "/api/browser-widgets") {
         const body = (await req.json()) as any
@@ -61,4 +63,11 @@ test("panToSession returns no-run when no live run matches", async () => {
 test("panToSession returns unreachable when tinstar is down", async () => {
   const c = new TinstarClient("http://localhost:1")
   expect(await c.panToSession("x")).toBe("unreachable")
+})
+
+test("panToSession returns unreachable when /api/state returns non-2xx", async () => {
+  stateStatus = 500
+  const c = new TinstarClient(base)
+  expect(await c.panToSession("x")).toBe("unreachable")
+  expect(viewportCalls).toHaveLength(0)
 })
