@@ -469,12 +469,14 @@ export class Daemon {
     })
   }
 
-  async focusSession(name: string, id: string): Promise<"ok" | "no-session" | "unreachable"> {
+  async focusSession(name: string, id: string): Promise<"ok" | "no-session" | "session-gone" | "unreachable"> {
     const m = await this.rt(name).store.load(id)
     const session = m?.context._session
     if (typeof session !== "string" || !session) return "no-session"
-    const ok = await this.opts.client.panToSession(session)
-    return ok ? "ok" : "unreachable"
+    const result = await this.opts.client.panToSession(session)
+    if (result === "ok") return "ok"
+    if (result === "no-run") return "session-gone"
+    return "unreachable"
   }
 
   // Resume a blocked marble (agent done / human decision). Validates the

@@ -6,16 +6,18 @@ let server: ReturnType<typeof Bun.serve>
 let base: string
 let widgets: any[] = []
 let viewportCalls: any[] = []
+let runs: any[] = []
 
 beforeEach(() => {
   widgets = []
   viewportCalls = []
+  runs = []
   server = Bun.serve({
     port: 0,
     async fetch(req) {
       const url = new URL(req.url)
       if (req.method === "GET" && url.pathname === "/api/state") {
-        return Response.json({ browserWidgets: widgets })
+        return Response.json({ browserWidgets: widgets, runs })
       }
       if (req.method === "POST" && url.pathname === "/api/browser-widgets") {
         const body = (await req.json()) as any
@@ -43,13 +45,20 @@ test("ensureBrowserWidget creates when absent, reuses when present", async () =>
   expect(widgets).toHaveLength(1)
 })
 
-test("panToSession posts a focus viewport directive", async () => {
+test("panToSession focuses when a live run matches the session", async () => {
+  runs.push({ sessionId: "wc-demo-m1" })
   const c = new TinstarClient(base)
-  expect(await c.panToSession("wc-demo-m1")).toBe(true)
+  expect(await c.panToSession("wc-demo-m1")).toBe("ok")
   expect(viewportCalls[0]).toEqual({ action: "focus", sessionName: "wc-demo-m1" })
 })
 
-test("panToSession returns false when tinstar is unreachable", async () => {
+test("panToSession returns no-run when no live run matches", async () => {
+  const c = new TinstarClient(base)
+  expect(await c.panToSession("wc-demo-gone")).toBe("no-run")
+  expect(viewportCalls).toHaveLength(0)
+})
+
+test("panToSession returns unreachable when tinstar is down", async () => {
   const c = new TinstarClient("http://localhost:1")
-  expect(await c.panToSession("x")).toBe(false)
+  expect(await c.panToSession("x")).toBe("unreachable")
 })

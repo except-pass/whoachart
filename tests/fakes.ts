@@ -4,14 +4,15 @@ export class FakeCanvas implements CanvasControl {
   ensured: EnsureWidgetOpts[] = []
   panned: string[] = []
   failEnsure = false
+  panResult: "ok" | "no-run" | "unreachable" = "ok"
   async ensureBrowserWidget(opts: EnsureWidgetOpts): Promise<{ widgetId: string }> {
     if (this.failEnsure) throw new Error("tinstar down")
     this.ensured.push(opts)
     return { widgetId: "browser-fake" }
   }
-  async panToSession(name: string): Promise<boolean> {
+  async panToSession(name: string): Promise<"ok" | "no-run" | "unreachable"> {
     this.panned.push(name)
-    return true
+    return this.panResult
   }
 }
 

@@ -149,6 +149,7 @@ export function createControlApi(daemon: Daemon, port: number, opts: ControlApiO
             const result = await daemon.focusSession(name, p[4])
             if (result === "ok") return json({ ok: true })
             if (result === "no-session") return json({ error: "marble has no linked session" }, 404)
+            if (result === "session-gone") return json({ error: "session is no longer open on the canvas" }, 409)
             return json({ error: "tinstar unreachable" }, 502)
           }
           // POST single-marble signal
