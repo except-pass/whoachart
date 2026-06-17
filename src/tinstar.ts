@@ -44,13 +44,23 @@ export interface EnsureWidgetOpts {
   url: string
   title?: string
   color?: string
+  // Tinstar space to place the widget in. Omitted → Tinstar uses the active
+  // space (today's behavior). Set → the daemon's isolation footprint
+  // (WHOACHART_SPACE) lands here instead of the user's primary workspace.
+  spaceId?: string
 }
 
 // Canvas-side controls the daemon uses: keep one widget per chart pointing at
-// the daemon's UI, and pan the user's canvas to a session on request.
+// the daemon's UI, pan the user's canvas to a session, resolve/create the
+// space widgets live in, and remove a widget on teardown.
 export interface CanvasControl {
   ensureBrowserWidget(opts: EnsureWidgetOpts): Promise<{ widgetId: string }>
   panToSession(sessionName: string): Promise<"ok" | "no-run" | "unreachable">
+  // Resolve a space NAME to its id, creating the space when create=true and it
+  // doesn't exist. Returns null on any failure so callers can fall back.
+  ensureSpace(name: string, create?: boolean): Promise<string | null>
+  // Remove a browser widget by id. Best-effort: returns false on failure.
+  deleteBrowserWidget(id: string): Promise<boolean>
 }
 
 export class TinstarClient implements ArtifactSink, SessionLauncher, CanvasControl {
@@ -132,6 +142,35 @@ export class TinstarClient implements ArtifactSink, SessionLauncher, CanvasContr
       throw new Error(`ensureBrowserWidget failed: ${res.status} ${JSON.stringify(body)}`)
     }
     return { widgetId: body.data.id }
+  }
+
+  // Resolve a space by name (GET /api/spaces), creating it (POST /api/spaces)
+  // when create=true and it's absent. Returns null on any failure — daemon
+  // startup falls back to active-space placement, teardown treats it as "no
+  // such space, nothing to do".
+  async ensureSpace(name: string, create = true): Promise<string | null> {
+    const spaces = await fetch(`${this.baseUrl}/api/spaces`)
+      .then((r) => (r.ok ? (r.json() as Promise<{ data?: Array<{ id?: string; name?: string }> }>) : Promise.reject(new Error(`spaces ${r.status}`))))
+      .catch(() => null)
+    if (!spaces) return null
+    const found = (spaces.data ?? []).find((s) => s?.name === name)
+    if (found?.id) return found.id
+    if (!create) return null
+    const res = await fetch(`${this.baseUrl}/api/spaces`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    }).catch(() => null)
+    if (!res || !res.ok) return null
+    const body = (await res.json().catch(() => ({}))) as any
+    return body?.data?.id ?? null
+  }
+
+  async deleteBrowserWidget(id: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/browser-widgets/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }).catch(() => null)
+    return !!res && res.ok
   }
 
   async panToSession(sessionName: string): Promise<"ok" | "no-run" | "unreachable"> {
