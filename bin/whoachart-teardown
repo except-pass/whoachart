@@ -1,0 +1,23 @@
+#!/usr/bin/env bun
+// bin/whoachart-teardown [space] — empty a Tinstar sandbox space of the
+// whoachart footprint (default space: _testing). Idempotent: re-running on an
+// already-clean space is a no-op that exits 0.
+//
+//   bin/whoachart-teardown                 # tears down _testing
+//   bin/whoachart-teardown my-sandbox      # tears down a named space
+//   TINSTAR_URL=http://host:5273 bin/whoachart-teardown
+import { TinstarClient } from "../src/tinstar"
+import { teardownSpace } from "../src/teardown"
+
+const space = process.argv[2] ?? "_testing"
+const base = process.env.TINSTAR_URL ?? "http://localhost:5273"
+const client = new TinstarClient(base)
+
+const res = await teardownSpace(client, space)
+if (!res.found) {
+  console.log(`[whoachart-teardown] space "${space}" not found — nothing to do`)
+} else {
+  console.log(
+    `[whoachart-teardown] space "${space}" (${res.spaceId}): removed ${res.widgets} widget(s), stopped ${res.sessions} session(s)`,
+  )
+}

@@ -173,6 +173,14 @@ export class TinstarClient implements ArtifactSink, SessionLauncher, CanvasContr
     return !!res && res.ok
   }
 
+  // Raw Tinstar state snapshot (browserWidgets, runs, sessions, …). Returns
+  // null when unreachable. Used by teardown to enumerate a space's contents.
+  async getState(): Promise<Record<string, any> | null> {
+    return fetch(`${this.baseUrl}/api/state`)
+      .then((r) => (r.ok ? (r.json() as Promise<Record<string, any>>) : Promise.reject(new Error(`state ${r.status}`))))
+      .catch(() => null)
+  }
+
   async panToSession(sessionName: string): Promise<"ok" | "no-run" | "unreachable"> {
     // A session is focusable only if Tinstar still has a run for it — the
     // frontend resolves the focus directive by matching run.sessionId. If the
