@@ -227,6 +227,9 @@ export class Daemon {
         process.once("SIGTERM", () => teardownAndExit("SIGTERM"))
         process.once("SIGINT", () => teardownAndExit("SIGINT"))
       } else {
+        // Clear any stale value (e.g. a prior daemon in this process) so the
+        // fallback path can't leak another run's space id to shell nodes.
+        delete process.env.WHOACHART_TINSTAR_SPACE
         logLine("daemon", `could not resolve space "${this.opts.space}" — widgets fall back to the active space`)
       }
     }
@@ -311,15 +314,25 @@ export class Daemon {
     attempt()
   }
 
+  // How many widgets this run is tracking for teardown (test/inspection seam).
+  get trackedWidgetCount(): number {
+    return this.createdWidgets.length
+  }
+
   // Remove the browser widgets this run created (sandbox-space teardown).
   // Best-effort and time-bounded so shutdown can't hang on a slow Tinstar.
-  async teardownWidgets(): Promise<void> {
+  // Returns the number of widgets it attempted to remove.
+  async teardownWidgets(): Promise<number> {
     const widgets = this.createdWidgets.splice(0)
-    if (!widgets.length) return
+    if (!widgets.length) return 0
+    let timer: ReturnType<typeof setTimeout> | undefined
     await Promise.race([
       Promise.all(widgets.map((w) => this.opts.client.deleteBrowserWidget(w.widgetId).catch(() => false))),
-      new Promise<void>((resolve) => setTimeout(resolve, 3000)),
+      // Cleared on the fast path so a direct call (tests) doesn't dangle a 3s timer.
+      new Promise<void>((resolve) => { timer = setTimeout(resolve, 3000) }),
     ])
+    if (timer) clearTimeout(timer)
+    return widgets.length
   }
 
   charts(): string[] {

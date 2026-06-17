@@ -83,6 +83,25 @@ test("ensureBrowserWidget omits spaceId when not provided", async () => {
   expect("spaceId" in widgetBodies[0]).toBe(false)
 })
 
+test("ensureBrowserWidget does NOT reuse a same-url widget from a different space", async () => {
+  // A widget with this url already exists in the user's primary space. With a
+  // target space set, reusing it would defeat confinement AND get it tracked
+  // for teardown — so it must be a cache miss and a fresh widget created.
+  widgets.push({ id: "primary-widget", url: "http://x/ui/charts/demo", spaceId: "spc-main" })
+  const c = new TinstarClient(base)
+  const res = await c.ensureBrowserWidget({ url: "http://x/ui/charts/demo", title: "whoachart-demo", spaceId: "spc-test" })
+  expect(res.widgetId).not.toBe("primary-widget") // created fresh, did not reuse the primary-space widget
+  expect(widgetBodies[0].spaceId).toBe("spc-test")
+})
+
+test("ensureBrowserWidget reuses a same-url widget in the SAME space", async () => {
+  widgets.push({ id: "same-space-widget", url: "http://x/ui/charts/demo", spaceId: "spc-test" })
+  const c = new TinstarClient(base)
+  const res = await c.ensureBrowserWidget({ url: "http://x/ui/charts/demo", title: "whoachart-demo", spaceId: "spc-test" })
+  expect(res.widgetId).toBe("same-space-widget")
+  expect(widgetBodies).toHaveLength(0) // no new widget created
+})
+
 test("ensureSpace returns the existing space id when the name is present", async () => {
   spaces.push({ id: "spc-existing", name: "_testing" })
   const c = new TinstarClient(base)

@@ -12,7 +12,15 @@
 // Shared by `bin/whoachart-teardown` and available for tests. The daemon's
 // own SIGTERM cleanup (Daemon.teardownWidgets) deletes by tracked id instead —
 // this function is the by-space sweep for the CLI.
-import type { TinstarClient } from "./tinstar"
+
+// The slice of TinstarClient teardown needs — decouples this module from the
+// concrete class (TinstarClient satisfies it structurally).
+export interface TeardownClient {
+  ensureSpace(name: string, create?: boolean): Promise<string | null>
+  getState(): Promise<Record<string, any> | null>
+  deleteBrowserWidget(id: string): Promise<boolean>
+  stopSession(name: string): Promise<void>
+}
 
 export interface TeardownResult {
   found: boolean // did the space exist?
@@ -28,7 +36,7 @@ export interface TeardownOpts {
 }
 
 export async function teardownSpace(
-  client: TinstarClient,
+  client: TeardownClient,
   spaceName: string,
   opts: TeardownOpts = {},
 ): Promise<TeardownResult> {
@@ -47,12 +55,17 @@ export async function teardownSpace(
     if (await client.deleteBrowserWidget(w.id)) removedWidgets++
   }
 
-  // Runs carry spaceId + sessionId; stop each session in the space. Best-effort
-  // — stopSession swallows its own errors, so a dead session can't wedge teardown.
-  const runs = (state.runs ?? []).filter((r: any) => r?.spaceId === spaceId && r?.sessionId)
-  for (const r of runs) {
-    await client.stopSession(r.sessionId)
+  // Runs carry spaceId + sessionId; stop each DISTINCT session in the space.
+  // Dedupe by sessionId so multiple runs sharing one session aren't stopped (or
+  // counted) twice. Best-effort — stopSession swallows its own errors, so a dead
+  // session can't wedge teardown.
+  const sessionIds = new Set<string>()
+  for (const r of state.runs ?? []) {
+    if (r?.spaceId === spaceId && r?.sessionId) sessionIds.add(r.sessionId)
+  }
+  for (const sessionId of sessionIds) {
+    await client.stopSession(sessionId)
   }
 
-  return { found: true, spaceId, widgets: removedWidgets, sessions: runs.length }
+  return { found: true, spaceId, widgets: removedWidgets, sessions: sessionIds.size }
 }

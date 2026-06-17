@@ -129,7 +129,13 @@ export class TinstarClient implements ArtifactSink, SessionLauncher, CanvasContr
   async ensureBrowserWidget(opts: EnsureWidgetOpts): Promise<{ widgetId: string }> {
     const stateRes = await fetch(`${this.baseUrl}/api/state`)
     const state = (await stateRes.json().catch(() => ({}))) as any
-    const existing = (state?.browserWidgets ?? []).find((w: any) => w?.url === opts.url)
+    // Dedupe within the TARGET space. A same-url widget in a DIFFERENT space
+    // must be a cache miss: reusing it would (a) defeat WHOACHART_SPACE
+    // confinement and (b) make the daemon track — then delete on teardown — a
+    // widget living in the user's primary workspace.
+    const existing = (state?.browserWidgets ?? []).find(
+      (w: any) => w?.url === opts.url && (opts.spaceId == null || w?.spaceId === opts.spaceId),
+    )
     if (existing) return { widgetId: existing.id }
 
     const res = await fetch(`${this.baseUrl}/api/browser-widgets`, {
@@ -149,7 +155,9 @@ export class TinstarClient implements ArtifactSink, SessionLauncher, CanvasContr
   // startup falls back to active-space placement, teardown treats it as "no
   // such space, nothing to do".
   async ensureSpace(name: string, create = true): Promise<string | null> {
-    const spaces = await fetch(`${this.baseUrl}/api/spaces`)
+    // Timeout-bounded: ensureSpace is awaited synchronously in daemon.start()
+    // before the daemon serves traffic, so a hung Tinstar must not block boot.
+    const spaces = await fetch(`${this.baseUrl}/api/spaces`, { signal: AbortSignal.timeout(5000) })
       .then((r) => (r.ok ? (r.json() as Promise<{ data?: Array<{ id?: string; name?: string }> }>) : Promise.reject(new Error(`spaces ${r.status}`))))
       .catch(() => null)
     if (!spaces) return null
@@ -160,6 +168,7 @@ export class TinstarClient implements ArtifactSink, SessionLauncher, CanvasContr
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
+      signal: AbortSignal.timeout(5000),
     }).catch(() => null)
     if (!res || !res.ok) return null
     const body = (await res.json().catch(() => ({}))) as any
@@ -176,7 +185,7 @@ export class TinstarClient implements ArtifactSink, SessionLauncher, CanvasContr
   // Raw Tinstar state snapshot (browserWidgets, runs, sessions, …). Returns
   // null when unreachable. Used by teardown to enumerate a space's contents.
   async getState(): Promise<Record<string, any> | null> {
-    return fetch(`${this.baseUrl}/api/state`)
+    return fetch(`${this.baseUrl}/api/state`, { signal: AbortSignal.timeout(5000) })
       .then((r) => (r.ok ? (r.json() as Promise<Record<string, any>>) : Promise.reject(new Error(`state ${r.status}`))))
       .catch(() => null)
   }

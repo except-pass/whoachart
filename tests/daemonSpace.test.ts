@@ -53,19 +53,22 @@ test("with a space configured, the widget is placed in the resolved space", asyn
   // resolved id is exposed to shell nodes
   expect(process.env.WHOACHART_TINSTAR_SPACE).toBe("sp-test")
   // tracked for teardown
-  expect((d as any).createdWidgets).toHaveLength(1)
+  expect(d.trackedWidgetCount).toBe(1)
 })
 
 test("teardownWidgets deletes exactly the widgets this run created", async () => {
   const canvas = new FakeCanvas()
   canvas.spaceResult = "sp-test"
   const { d } = await makeDaemon({ space: "_testing", canvas })
-  const tracked = (d as any).createdWidgets.map((w: any) => w.widgetId)
-  await d.teardownWidgets()
-  expect(canvas.deleted).toEqual(tracked)
+  const trackedCount = d.trackedWidgetCount
+  expect(trackedCount).toBe(1)
+  const removed = await d.teardownWidgets()
+  expect(removed).toBe(trackedCount)
+  expect(canvas.deleted).toHaveLength(trackedCount)
   // idempotent: a second call removes nothing more
-  await d.teardownWidgets()
-  expect(canvas.deleted).toEqual(tracked)
+  const removedAgain = await d.teardownWidgets()
+  expect(removedAgain).toBe(0)
+  expect(canvas.deleted).toHaveLength(trackedCount)
 })
 
 test("falls back to active-space placement when the space cannot be resolved", async () => {
@@ -73,7 +76,7 @@ test("falls back to active-space placement when the space cannot be resolved", a
   canvas.spaceResult = null // resolve/create failed
   const { d } = await makeDaemon({ space: "_testing", canvas })
   expect(canvas.ensured[0].spaceId).toBeUndefined()
-  expect((d as any).createdWidgets).toHaveLength(0) // nothing tracked → nothing torn down
+  expect(d.trackedWidgetCount).toBe(0) // nothing tracked → nothing torn down
   expect(process.env.WHOACHART_TINSTAR_SPACE).toBeUndefined()
 })
 
@@ -81,5 +84,5 @@ test("with no space configured, behavior is unchanged (no spaceId, no tracking)"
   const { d, canvas } = await makeDaemon({})
   expect(canvas.spaceRequests).toEqual([])
   expect(canvas.ensured[0].spaceId).toBeUndefined()
-  expect((d as any).createdWidgets).toHaveLength(0)
+  expect(d.trackedWidgetCount).toBe(0)
 })

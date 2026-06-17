@@ -8,7 +8,7 @@
 //
 //   WHOACHART_IT=1 bun test tests/integration/spaceWidget.it.test.ts
 //   (optionally TINSTAR_URL=... ; defaults to http://localhost:5273)
-import { test, expect, beforeAll, afterAll } from "bun:test"
+import { test, expect, afterAll } from "bun:test"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { writeFile, mkdtemp } from "node:fs/promises"
@@ -38,12 +38,6 @@ const client = new TinstarClient(base)
 // Always clean the sandbox after the run, even on mid-test failure.
 afterAll(async () => {
   if (IT) await teardownSpace(client, SPACE)
-})
-
-beforeAll(() => {
-  if (IT && !process.env.TINSTAR_URL) {
-    // surfaced in the test body's reachability assertion if Tinstar is down
-  }
 })
 
 const itTest = IT ? test : test.skip

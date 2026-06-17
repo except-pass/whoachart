@@ -9,6 +9,7 @@
 // gated behind WHOACHART_IT and is the one place a real round-trip is intended.
 import { test, expect } from "bun:test"
 import { readFileSync } from "node:fs"
+import { join, dirname } from "node:path"
 
 const SELF = "selfContained.test.ts"
 // Argless construction only: `new TinstarClient()` with nothing (or whitespace)
@@ -16,12 +17,16 @@ const SELF = "selfContained.test.ts"
 const ARGLESS = /new\s+TinstarClient\s*\(\s*\)/
 
 test("no unit test constructs an argless (live) TinstarClient", () => {
+  // Scan relative to the repo root (this file lives in tests/), not the process
+  // cwd — otherwise running `bun test` from a subdirectory would glob nothing
+  // and the guard would pass vacuously.
+  const repoRoot = dirname(import.meta.dir)
   const glob = new Bun.Glob("tests/**/*.ts")
   const offenders: string[] = []
-  for (const rel of glob.scanSync(".")) {
+  for (const rel of glob.scanSync(repoRoot)) {
     if (rel.endsWith(SELF)) continue
     if (rel.endsWith(".it.test.ts")) continue // opt-in integration, WHOACHART_IT-gated
-    const src = readFileSync(rel, "utf8")
+    const src = readFileSync(join(repoRoot, rel), "utf8")
     if (ARGLESS.test(src)) offenders.push(rel)
   }
   expect(
