@@ -19,6 +19,10 @@ export function buildEnv(marble: Marble, node: ChartNode, contextPath: string): 
     WHOACHART_NODE: node.id,
     WHOACHART_CONTEXT: contextPath,
     WHOACHART_WORKSPACE: marble.workpiece ?? "",
+    // Tinstar space id the daemon confined this run to (WHOACHART_SPACE),
+    // empty when unset. Chart scripts that create canvas entities can pass
+    // this as spaceId so their footprint stays in the sandbox space too.
+    WHOACHART_TINSTAR_SPACE: process.env.WHOACHART_TINSTAR_SPACE ?? "",
   }
 }
 

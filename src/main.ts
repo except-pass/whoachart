@@ -58,6 +58,10 @@ async function main(): Promise<void> {
     launcher: client,
     baseUrl: `http://localhost:${port}`,
     publicUrl,
+    // When set (e.g. WHOACHART_SPACE=_testing), confine all browser widgets to
+    // that Tinstar space and tear them down on shutdown — keeps dev/test noise
+    // off the primary workspace.
+    space: process.env.WHOACHART_SPACE || undefined,
   })
   await daemon.start()
   createControlApi(daemon, port)

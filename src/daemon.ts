@@ -69,6 +69,12 @@ export interface DaemonOpts {
   // The URL browsers use to reach this daemon (tailnet hostname in prod).
   publicUrl?: string
   launcher?: SessionLauncher
+  // Tinstar space NAME to confine this daemon's footprint to (WHOACHART_SPACE).
+  // Unset → widgets land in Tinstar's active space (today's behavior). Set →
+  // the space is resolved/created at start, every widget is placed there, the
+  // id is exposed to shell nodes as WHOACHART_TINSTAR_SPACE, and the daemon
+  // removes its widgets on SIGTERM/SIGINT.
+  space?: string
 }
 
 interface ChartRuntime {
@@ -161,6 +167,11 @@ export class Daemon {
   // launcher/baseUrl never leak through the module-global registry.
   private nodeTypes!: Map<string, NodeType>
   private baseUrl!: string
+  // Resolved id of opts.space (undefined when unset or unresolvable → fallback
+  // to active-space placement). Widgets created with it; teardown keyed off the
+  // tracked ids below.
+  private spaceId?: string
+  private createdWidgets: Array<{ chart: string; widgetId: string }> = []
   private chartStore?: ChartStore
   // Serializes all chart-store mutations so two concurrent PUT/POST/DELETEs can't
   // interleave engine swaps. A rejected mutation must not wedge the chain.
@@ -197,6 +208,28 @@ export class Daemon {
       ["agent", makeAgentNode(launcher, (m) => `${this.baseUrl}/api/charts/${m.chart}/marbles/${m.id}/signal`)],
     ])
     if (this.opts.chartsDir) this.chartStore = new ChartStore(this.opts.chartsDir)
+
+    // Confine this daemon's canvas footprint to a named Tinstar space when
+    // WHOACHART_SPACE is set. Resolve (creating if needed) ONCE so the 15s
+    // widget loop stays a cheap POST. On failure, log and fall back to
+    // active-space placement rather than crashing — isolation is best-effort.
+    if (this.opts.space) {
+      this.spaceId = (await this.opts.client.ensureSpace(this.opts.space)) ?? undefined
+      if (this.spaceId) {
+        // Expose to shell nodes (see buildEnv) so chart scripts can target the
+        // same space; process-global because runShell reads from process.env.
+        process.env.WHOACHART_TINSTAR_SPACE = this.spaceId
+        logLine("daemon", `confining widgets to space "${this.opts.space}" (${this.spaceId})`)
+        const teardownAndExit = (sig: string): void => {
+          logLine("daemon", `${sig} — removing ${this.createdWidgets.length} widget(s) from space`)
+          void this.teardownWidgets().finally(() => process.exit(0))
+        }
+        process.once("SIGTERM", () => teardownAndExit("SIGTERM"))
+        process.once("SIGINT", () => teardownAndExit("SIGINT"))
+      } else {
+        logLine("daemon", `could not resolve space "${this.opts.space}" — widgets fall back to the active space`)
+      }
+    }
 
     // Explicit boot-load list (existing behavior).
     for (const path of this.opts.charts ?? []) {
@@ -258,8 +291,16 @@ export class Daemon {
       // otherwise a deleted chart whose widget never landed retries forever,
       // logging under the dead name. The runtime map is the liveness source.
       if (!this.runtimes.has(chart.name)) return
-      this.opts.client.ensureBrowserWidget({ url, title: `whoachart-${chart.name}` }).then(
-        () => logLine(chart.name, `widget ensured url=${url}`),
+      this.opts.client.ensureBrowserWidget({ url, title: `whoachart-${chart.name}`, spaceId: this.spaceId }).then(
+        (res) => {
+          // Track for SIGTERM teardown (no-op when no space is configured —
+          // we only tear down in sandbox mode). Dedupe by widgetId so the 15s
+          // retry can't accumulate duplicate teardown entries.
+          if (this.spaceId && !this.createdWidgets.some((w) => w.widgetId === res.widgetId)) {
+            this.createdWidgets.push({ chart: chart.name, widgetId: res.widgetId })
+          }
+          logLine(chart.name, `widget ensured url=${url}`)
+        },
         (err) => {
           logLine(chart.name, `widget ensure failed (${String(err).split("\n")[0]}); retrying in ${retryMs / 1000}s`)
           const t = setTimeout(attempt, retryMs)
@@ -268,6 +309,17 @@ export class Daemon {
       )
     }
     attempt()
+  }
+
+  // Remove the browser widgets this run created (sandbox-space teardown).
+  // Best-effort and time-bounded so shutdown can't hang on a slow Tinstar.
+  async teardownWidgets(): Promise<void> {
+    const widgets = this.createdWidgets.splice(0)
+    if (!widgets.length) return
+    await Promise.race([
+      Promise.all(widgets.map((w) => this.opts.client.deleteBrowserWidget(w.widgetId).catch(() => false))),
+      new Promise<void>((resolve) => setTimeout(resolve, 3000)),
+    ])
   }
 
   charts(): string[] {

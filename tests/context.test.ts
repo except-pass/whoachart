@@ -38,6 +38,22 @@ test("runShell exposes context + ids via env", async () => {
   expect(out.stdout).toContain("node=a")
 })
 
+test("runShell exposes WHOACHART_TINSTAR_SPACE when the daemon set it", async () => {
+  process.env.WHOACHART_TINSTAR_SPACE = "sp-test"
+  try {
+    const out = await runShell(`echo "space=[$WHOACHART_TINSTAR_SPACE]"`, marble(), node)
+    expect(out.stdout).toContain("space=[sp-test]")
+  } finally {
+    delete process.env.WHOACHART_TINSTAR_SPACE
+  }
+})
+
+test("WHOACHART_TINSTAR_SPACE is empty when no space is configured", async () => {
+  delete process.env.WHOACHART_TINSTAR_SPACE
+  const out = await runShell(`echo "space=[$WHOACHART_TINSTAR_SPACE]"`, marble(), node)
+  expect(out.stdout).toContain("space=[]")
+})
+
 test("runShell streams stdout lines LIVE (mid-execution), not buffered to exit", async () => {
   const got: string[] = []
   let firstResolve: () => void
