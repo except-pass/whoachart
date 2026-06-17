@@ -50,7 +50,7 @@ export interface EnsureWidgetOpts {
 // the daemon's UI, and pan the user's canvas to a session on request.
 export interface CanvasControl {
   ensureBrowserWidget(opts: EnsureWidgetOpts): Promise<{ widgetId: string }>
-  panToSession(sessionName: string): Promise<boolean>
+  panToSession(sessionName: string): Promise<"ok" | "no-run" | "unreachable">
 }
 
 export class TinstarClient implements ArtifactSink, SessionLauncher, CanvasControl {
@@ -134,12 +134,20 @@ export class TinstarClient implements ArtifactSink, SessionLauncher, CanvasContr
     return { widgetId: body.data.id }
   }
 
-  async panToSession(sessionName: string): Promise<boolean> {
+  async panToSession(sessionName: string): Promise<"ok" | "no-run" | "unreachable"> {
+    // A session is focusable only if Tinstar still has a run for it — the
+    // frontend resolves the focus directive by matching run.sessionId. If the
+    // run is gone, the broadcast would silently no-op, so report it instead.
+    const state = await fetch(`${this.baseUrl}/api/state`)
+      .then((r) => (r.ok ? (r.json() as Promise<{ runs?: Array<{ sessionId?: string }> }>) : Promise.reject(new Error(`state ${r.status}`))))
+      .catch(() => null)
+    if (!state) return "unreachable"
+    if (!(state.runs ?? []).some((r) => r?.sessionId === sessionName)) return "no-run"
     const res = await fetch(`${this.baseUrl}/api/canvas/viewport`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "focus", sessionName }),
     }).catch(() => null)
-    return !!res && res.ok
+    return res && res.ok ? "ok" : "unreachable"
   }
 }

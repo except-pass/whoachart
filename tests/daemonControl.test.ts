@@ -273,4 +273,7 @@ test("retry passes through and focusSession reports status", async () => {
   await store.save(rec)
   expect(await d.focusSession("gatey", m2.id)).toBe("ok")
   expect(canvas.panned).toEqual(["wc-fake"])
+  // session present in context but no live run on the canvas → session-gone
+  canvas.panResult = "no-run"
+  expect(await d.focusSession("gatey", m2.id)).toBe("session-gone")
 })

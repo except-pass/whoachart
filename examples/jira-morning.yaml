@@ -3,13 +3,18 @@
 # Morning Jira triage. Will manually submits a scan (UI or curl); it finds
 # issues needing his attention since the last scan (assigned-to-him updated,
 # or mentioning him) and spawns ONE MARBLE PER ISSUE at start=triage-intake
-# (a source node: its form is the lane's typed interface, validated on
-# submit). An agent triages and drafts a reply, Will approves/revises/skips
-# at the human gate, approved drafts are posted back to Jira.
+# (a source node: its form is the lane's typed interface, validated on submit).
+# A CHEAP `claude -p` classifier (no Tinstar session) decides fyi vs. needs-
+# attention. Will reviews the flagged ones and clicks "work on this" to spin up
+# a real Tinstar task + session, seeded with the marble's context. The chart is
+# READ-ONLY on Jira — replies happen inside the spawned session or by hand.
 #
-# Trigger: manual only (no cron) — design: docs/superpowers/specs/2026-06-11-jira-morning-chart-design.md
+# Trigger: manual only (no cron). Design:
+#   docs/superpowers/specs/2026-06-16-jira-morning-cheap-triage-spawn-on-click-design.md
 # Secrets: scripts run `eval "$(clavis get jira/prod)"` at runtime; creds
 #          never appear in this file or in marble context.
+# Trust:   ticket-derived text (summary/title) reaches LLM prompts unsanitized
+#          in triage and spawn-workon; the human review gate is not the only boundary.
 # State:   ~/.local/state/whoachart/jira-morning.last — ISO time of the last
 #          SUCCESSFUL scan; written only after a scan completes, so a failed
 #          scan or skipped weekend is covered by the next run's window.
@@ -45,7 +50,7 @@ nodes:
         # Normalize to a JQL time. Relative forms pass through; ISO/state
         # timestamps become a JQL datetime in machine-local time (Jira
         # evaluates datetimes in Will's Jira TZ — slight skew over-includes,
-        # which dedupe + agent triage absorb).
+        # which dedupe + cheap triage absorb).
         case "$SINCE" in
           -*) JQLT="$SINCE" ;;
           *[hdwm]) JQLT="-$SINCE" ;;
@@ -117,30 +122,39 @@ nodes:
         - { key: reporter, type: text }
         - { key: updated, type: text }
 
+  # Cheap triage: a single headless `claude -p` per issue (NO Tinstar session).
+  # Run inline so the engine's concurrency cap (default 4) throttles a morning
+  # batch to 4-at-a-time rather than launching one process per ticket at once.
   - id: triage
-    type: agent
-    name: Triage + draft
+    type: shell
+    name: Triage
     color: "#60a5fa"
-    stuck_after: 1800
+    timeout: 180000 # ms — inline claude -p; engine cap bounds concurrency
     config:
-      brief: >
-        A Jira issue needs morning triage for Will (williamg@fortresspower.com).
-        The marble context has key/url/reason. Fetch the LIVE issue and full
-        comment thread before judging anything: run eval "$(clavis get jira/prod)"
-        then curl -s -u "$JIRA_PROD_EMAIL:$JIRA_PROD_TOKEN"
-        "$JIRA_PROD_URL/rest/api/2/issue/KEY" and
-        "$JIRA_PROD_URL/rest/api/2/issue/KEY/comment" (substitute the context
-        key for KEY). Decide whether this needs a reply from Will. If NO (bare
-        status/field change, FYI traffic, thread already resolved, or the last
-        word is already Will's): signal next=fyi with merge
-        {"triage_note": "<one sentence why>"}. If YES: write the reply Will
-        should post — plain text (Jira wiki markup OK), concrete and brief,
-        in a direct engineer-to-engineer voice — and signal next=review with
-        merge {"draft": "<the comment>", "rationale": "<one sentence why a
-        reply is needed>"}. If the context contains "feedback", this is a
-        redraft of the existing "draft": honor the feedback over your own
-        judgment and signal next=review again. NEVER post to Jira yourself —
-        the chart posts only after human approval.
+      on_enter: |
+        set -euo pipefail
+        KEY=$(jq -r .key "$WHOACHART_CONTEXT")
+        SUMMARY=$(jq -r .summary "$WHOACHART_CONTEXT")
+        REASON=$(jq -r .reason "$WHOACHART_CONTEXT")
+        eval "$(clavis get jira/prod)"
+        # issue_type captured here so spawn-workon needn't re-fetch Jira.
+        ITYPE=$(curl -sf -u "$JIRA_PROD_EMAIL:$JIRA_PROD_TOKEN" \
+          "$JIRA_PROD_URL/rest/api/2/issue/$KEY?fields=issuetype" 2>/dev/null | jq -r '.fields.issuetype.name // ""' 2>/dev/null || echo "")
+
+        PROMPT="Triage Jira issue $KEY: $SUMMARY (reason: $REASON). Use the Atlassian Jira MCP tools (e.g. mcp__atlassian__getJiraIssue) to fetch the issue and its full comment thread. Decide whether this needs Will's attention. It does NOT if it is a bare status/field change, FYI traffic, an already-resolved thread, or the last word is already Will's. Reply with EXACTLY ONE LINE of JSON and nothing else: {\"attention\": true|false, \"why\": \"<one sentence>\"}"
+
+        # Parse the last brace-delimited line of claude's output. Default to
+        # attention=true on empty/unparseable output so nothing is dropped silently.
+        OUT=$(claude -p "$PROMPT" --allowedTools "mcp__atlassian__*" 2>/dev/null \
+              | grep -oE '\{.*\}' | tail -1 || true)
+        ATT=$(jq -r '.attention // true' <<<"${OUT:-{}}" 2>/dev/null || echo true)
+        WHY=$(jq -r '.why // "triage output unparseable — review manually"' <<<"${OUT:-{}}" 2>/dev/null \
+              || echo "triage output unparseable — review manually")
+
+        NEXT=fyi; [ "$ATT" = "true" ] && NEXT=attention
+        # -c: the emit MUST be a single line (engine parses last stdout line only)
+        jq -cn --arg n "$NEXT" --arg w "$WHY" --arg t "$ITYPE" \
+          '{next: $n, merge: {triage_note: $w, issue_type: $t}}'
 
   - id: review
     type: human
@@ -150,14 +164,14 @@ nodes:
       - { key: summary, as: text }
       - { key: url, as: link }
       - { key: reason, as: text }
-      - { key: rationale, as: text }
-      - { key: draft, as: markdown }
-      - { key: feedback, as: text }
+      - { key: triage_note, as: text }
+      - { key: issue_type, as: text }
     config: {}
 
-  # Breakout: spin up a Tinstar task + session for the ticket (the /workon
-  # skill's mechanics: dev epic, task-<key>, session named <key>, bugsearcher
-  # hand for Bugs). The marble ends here — the work continues in Tinstar.
+  # On "work on this": full /workon breakout — a Tinstar board task under the
+  # dev epic plus a session in cmsandbox (worktree; bugsearcher hand for Bugs),
+  # seeded with the marble's context. Sets _session to the now-live session and
+  # best-effort pans the canvas to it; the drawer's focus button re-pans later.
   - id: spawn-workon
     type: shell
     name: Spawn workon
@@ -165,15 +179,14 @@ nodes:
     config:
       on_enter: |
         set -euo pipefail
-        eval "$(clavis get jira/prod)"
-        TINSTAR="${TINSTAR_DASHBOARD_URL:-http://localhost:5273}"
+        TINSTAR="${TINSTAR_URL:-http://localhost:5273}"
         KEY=$(jq -r .key "$WHOACHART_CONTEXT")
         SUMMARY=$(jq -r .summary "$WHOACHART_CONTEXT")
         URL=$(jq -r .url "$WHOACHART_CONTEXT")
+        NOTE=$(jq -r '.triage_note // ""' "$WHOACHART_CONTEXT")
+        ITYPE=$(jq -r '.issue_type // ""' "$WHOACHART_CONTEXT")
         LKEY=$(tr 'A-Z' 'a-z' <<<"$KEY")
 
-        ITYPE=$(curl -sf -u "$JIRA_PROD_EMAIL:$JIRA_PROD_TOKEN" \
-          "$JIRA_PROD_URL/rest/api/2/issue/$KEY?fields=issuetype" | jq -r .fields.issuetype.name)
         EPIC=$(curl -sf "$TINSTAR/api/state" \
           | jq -re '[.epics[] | select((.name|ascii_downcase)=="dev")][0].id')
 
@@ -183,10 +196,10 @@ nodes:
           | curl -s -X POST "$TINSTAR/api/tasks" -H 'Content-Type: application/json' -d @- >/dev/null || true
 
         HAND=null
-        PROMPT="Read and understand Jira ticket $KEY: $SUMMARY. Use the jira MCP tool to fetch full details. Summarize: what is the ask, what components are involved, and what is the acceptance criteria. Then propose an approach."
+        PROMPT="Work the Jira ticket $KEY: $SUMMARY ($URL). Morning triage flagged it: $NOTE. Use the Atlassian Jira MCP tools (e.g. mcp__atlassian__getJiraIssue) to fetch full details including comments and attachments, then propose and carry out an approach."
         if [ "$ITYPE" = "Bug" ]; then
           HAND='"bugsearcher"'
-          PROMPT="Investigate Jira bug $KEY: $SUMMARY. Use the jira MCP tool to fetch full details including comments and attachments. Your job is to diagnose the root cause — find where and why it fails. Do NOT fix it yet. Deliver a bug diagnosis with reproduction steps, root cause location, and failure path."
+          PROMPT="Investigate Jira bug $KEY: $SUMMARY ($URL). Morning triage flagged it: $NOTE. Use the Atlassian Jira MCP tools (e.g. mcp__atlassian__getJiraIssue) to fetch full details including comments and attachments. Diagnose the root cause — find where and why it fails. Deliver reproduction steps, root-cause location, and the failure path."
         fi
 
         jq -cn --arg n "$LKEY" --arg t "task-$LKEY" --arg p "$PROMPT" --argjson h "$HAND" \
@@ -194,28 +207,14 @@ nodes:
             worktree:true, taskId:$t, hand:$h, prompt:$p}' \
           | curl -sf -X POST "$TINSTAR/api/sessions" -H 'Content-Type: application/json' -d @- >/dev/null
 
-        # -c: the emit MUST be a single line (engine parses last stdout line only)
-        jq -cn --arg s "$LKEY" --arg t "task-$LKEY" --arg i "$ITYPE" \
-          '{merge: {workon_session: $s, workon_task: $t,
-                    workon_hand: (if $i == "Bug" then "bugsearcher" else "none" end)}}'
+        # Best-effort pan; the drawer focus button is the reliable re-focus path.
+        jq -cn --arg s "$LKEY" '{action:"focus", sessionName:$s}' \
+          | curl -s -X POST "$TINSTAR/api/canvas/viewport" -H 'Content-Type: application/json' -d @- >/dev/null || true
 
-  - id: post-comment
-    type: shell
-    name: Post to Jira
-    timeout: 60000 # ms
-    config:
-      on_enter: |
-        set -euo pipefail
-        eval "$(clavis get jira/prod)"
-        KEY=$(jq -r .key "$WHOACHART_CONTEXT")
-        RESP=$(jq '{body: .draft}' "$WHOACHART_CONTEXT" \
-          | curl -sf -u "$JIRA_PROD_EMAIL:$JIRA_PROD_TOKEN" \
-              -H 'Content-Type: application/json' -d @- \
-              "$JIRA_PROD_URL/rest/api/2/issue/$KEY/comment")
-        CID=$(jq -r .id <<<"$RESP")
+        # _session points at the NOW-LIVE session, so the drawer button works.
         # -c: the emit MUST be a single line (engine parses last stdout line only)
-        jq -cn --arg u "$JIRA_PROD_URL/browse/$KEY?focusedCommentId=$CID" \
-          '{merge: {posted_url: $u}}'
+        jq -cn --arg s "$LKEY" --arg t "task-$LKEY" \
+          '{merge: {_session: $s, workon_task: $t}}'
 
   - id: quiet-day
     type: end
@@ -232,19 +231,14 @@ nodes:
     name: FYI only
     config: { outcome: success }
 
-  - id: posted
-    type: end
-    name: Posted
-    config: { outcome: success }
-
   - id: skipped
     type: end
     name: Skipped
     config: { outcome: warning }
 
-  - id: working
+  - id: in-session
     type: end
-    name: In Tinstar
+    name: In session
     config: { outcome: success }
 
 edges:
@@ -252,12 +246,8 @@ edges:
   - { from: query-jira, to: quiet-day, name: quiet }
   - { from: query-jira, to: scan-done, name: done }
   - { from: triage-intake, to: triage }
-  - { from: triage, to: review, name: review }
+  - { from: triage, to: review, name: attention }
   - { from: triage, to: fyi, name: fyi }
-  - { from: review, to: post-comment, name: approve }
-  - { from: review, to: triage, name: revise,
-      form: [ { key: feedback, type: textarea, required: true } ] }
-  - { from: review, to: skipped, name: skip }
   - { from: review, to: spawn-workon, name: workon }
-  - { from: spawn-workon, to: working }
-  - { from: post-comment, to: posted }
+  - { from: review, to: skipped, name: skip }
+  - { from: spawn-workon, to: in-session }
