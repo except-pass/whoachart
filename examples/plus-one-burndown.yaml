@@ -1,0 +1,285 @@
+# examples/plus-one-burndown.yaml
+#
+# Plus One pipeline burndown. Will manually submits a scan; it finds the PRs the
+# backlog pipeline (the implementation loop) opened and parked in Linear's
+# `In Review` queue, and spawns ONE MARBLE PER PR at start=pr-intake. Each PR
+# gets the new FMEA taste-audit (the rubric, applied by a fresh sub-agent that
+# posts a scorecard), then stops at a human gate. Will picks ONE of three:
+#   work  -> spin up a Tinstar session to finish/reconcile the PR
+#   merge -> squash-merge it
+#   reject-> close it and hand the ticket back to needs-human
+# EITHER WAY the lane ends in the loop's Adapt step (/ce-compound) so each
+# decision compounds a learning.
+#
+# Trigger: manual only (no cron). Inspired by examples/jira-morning.yaml.
+#
+# Provenance (the gap this chart closes): a pipeline PR is NOT identifiable by
+# author — the operator and the loops share one GitHub/Linear identity. The
+# authoritative marker is a `pipeline-claim` / `pipeline-triaged` stamp on the
+# Linear issue (see docs/runbooks/backlog-pipeline-linear-conventions.md), so
+# the scan filters on those, not on the branch name or author. (A `pipeline`
+# GitHub label was backfilled onto the open set as a convenience, but the Linear
+# stamp is the source of truth and what this chart trusts.)
+#
+# Secrets: scripts run `eval "$(clavis get linear/token)"` at runtime; the token
+#          (LINEAR_TOKEN_AUTHTOKEN) never appears in this file or marble context.
+#          GitHub uses the ambient `gh` auth.
+# Trust:   PR titles / ticket text reach LLM prompts (taste-audit, adapt)
+#          unsanitized; the human gate at `review` is not the only boundary.
+# Loop invariant: the taste-audit SKIPS a PR whose diff only touches
+#          docs/solutions/ (and/or CONCEPTS.md) — that is the Check->Adapt loop's
+#          own learning-capture output; auditing it feeds the loop into itself.
+#          It fails SAFE: an empty/unreadable file list proceeds to the audit
+#          rather than silently skipping. (docs/solutions/architecture-patterns/
+#          a-self-improving-loop-must-not-audit-its-own-output.md)
+# Env:     PLUSONE_REPO (default ~/repo/plus-one) — a checkout the audit/adapt
+#          steps read the rubric and diff-scoped learnings from;
+#          PLUSONE_GH_REPO (default EveryInc/plus-one) — the gh -R target.
+name: plus-one-burndown
+nodes:
+  - id: scan
+    type: source
+    name: Burndown scan
+    config:
+      trigger: api
+      form:
+        - { key: note, type: text, label: "Optional note (scan is parameterless; reads Linear In Review)" }
+
+  - id: query-pipeline
+    type: shell
+    name: Find pipeline PRs
+    color: "#60a5fa"
+    timeout: 180000 # ms
+    config:
+      on_enter: |
+        set -euo pipefail
+        eval "$(clavis get linear/token)"
+        KEY="$LINEAR_TOKEN_AUTHTOKEN"
+        BASE="http://localhost:${WHOACHART_PORT:-5330}"
+        REPO="${PLUSONE_GH_REPO:-EveryInc/plus-one}"
+
+        # In Review PLUSONE issues + their comments. Keep ONLY those the pipeline
+        # actually made: a pipeline-claim or pipeline-triaged stamp is present.
+        RESP=$(curl -sf -X POST https://api.linear.app/graphql \
+          -H "Authorization: $KEY" -H "Content-Type: application/json" \
+          -d '{"query":"query { issues(first:100, filter:{ team:{key:{eq:\"PLUSONE\"}}, state:{name:{eq:\"In Review\"}} }){ nodes { identifier comments(first:50){ nodes { body } } } } }"}')
+
+        # Dedupe: skip a PR that already has a live marble in this chart.
+        SEEN=$(curl -sf "$BASE/api/charts/plus-one-burndown/marbles" \
+          | jq -c '[.marbles[] | select(.context.pr) |
+              { pr: (.context.pr|tostring),
+                live: (.status=="queued" or .status=="running" or .status=="blocked") }]')
+
+        SPAWNED=0
+        while IFS= read -r IDENT; do
+          [ -z "$IDENT" ] && continue
+          NUM=${IDENT#PLUSONE-}
+          # The loop pushes its work to claude/plusone-<n>; find that open PR.
+          PRJSON=$(gh pr list -R "$REPO" --head "claude/plusone-$NUM" --state open \
+                    --json number,title,url -q '.[0]' 2>/dev/null || echo "")
+          if [ -z "$PRJSON" ] || [ "$PRJSON" = "null" ]; then
+            echo "no open PR for $IDENT (claude/plusone-$NUM)" >&2; continue
+          fi
+          PR=$(jq -r .number <<<"$PRJSON")
+          if jq -e --arg p "$PR" 'any(.[]; .pr==$p and .live)' <<<"$SEEN" >/dev/null; then
+            echo "dedupe: PR #$PR already live, skipping" >&2; continue
+          fi
+          jq -n --argjson j "$PRJSON" --arg k "$IDENT" --arg n "$NUM" \
+            '{ start:"pr-intake",
+               context:{ key:$k, pr:($j.number|tostring), title:$j.title,
+                         url:$j.url, branch:("claude/plusone-"+$n) } }' \
+            | curl -sf -X POST "$BASE/api/charts/plus-one-burndown/marbles" \
+                -H 'Content-Type: application/json' -d @- >/dev/null
+          SPAWNED=$((SPAWNED+1))
+        done < <(jq -r '.data.issues.nodes[]
+                   | select(any(.comments.nodes[]; (.body|test("pipeline-claim|pipeline-triaged"))))
+                   | .identifier' <<<"$RESP")
+
+        NEXT=quiet; [ "$SPAWNED" -gt 0 ] && NEXT=found
+        # -c: the emit MUST be a single line (engine parses last stdout line only)
+        jq -cn --arg n "$NEXT" --argjson s "$SPAWNED" '{next:$n, merge:{spawned:$s}}'
+
+  # Entry point of the per-PR lane. A source so the lane's reachability roots
+  # here and the form is the typed interface for injected marbles.
+  - id: pr-intake
+    type: source
+    name: PR intake
+    config:
+      trigger: api
+      form:
+        - { key: key, type: text, required: true }
+        - { key: pr, type: text, required: true }
+        - { key: title, type: text, required: true }
+        - { key: url, type: text, required: true }
+        - { key: branch, type: text }
+
+  # The new taste-audit: a fresh sub-agent (NOT the implementer) applies the
+  # rubric to the PR diff, posts a scorecard, and emits a verdict. It never
+  # merges — a human always decides — so it routes straight to `review` carrying
+  # the verdict. Cheap headless `claude -p`; engine concurrency cap throttles a
+  # batch (default 4-at-a-time) rather than one process per PR at once.
+  - id: taste-audit
+    type: shell
+    name: Taste audit (FMEA)
+    color: "#a78bfa"
+    timeout: 600000 # ms — claude -p reads the diff, applies the rubric, posts
+    config:
+      on_enter: |
+        set -euo pipefail
+        cd "${PLUSONE_REPO:-$HOME/repo/plus-one}"
+        PR=$(jq -r .pr "$WHOACHART_CONTEXT")
+        TICKET=$(jq -r .key "$WHOACHART_CONTEXT")
+        REPO="${PLUSONE_GH_REPO:-EveryInc/plus-one}"
+
+        # Loop invariant + FAIL-SAFE: skip a docs/solutions-only (or CONCEPTS.md)
+        # PR — the loop's own output. Empty/unreadable file list -> proceed.
+        FILES=$(gh pr diff "$PR" -R "$REPO" --name-only 2>/dev/null || true)
+        if [ -n "$FILES" ] && ! grep -qvE '^(docs/solutions/|CONCEPTS\.md$)' <<<"$FILES"; then
+          jq -cn '{next:"skip", merge:{verdict:"skip", audit_summary:"docs/solutions-only learning PR — loop-invariant skip"}}'
+          exit 0
+        fi
+
+        PROMPT="You are a fresh taste-audit sub-agent (NOT the implementer). Apply the rubric at docs/runbooks/pipeline-taste-audit-rubric.md to PR #$PR ($TICKET) of $REPO. Read the linked ticket, the diff, the changed files and their callers, and the diff-scoped docs/solutions learnings (the taste input). Check mergeability + CI on the live merge ref before trusting any green check. Score the dimensions and run the FMEA Decision Audit: Risk = Severity x Likelihood x Irreversibility; always surface high-risk / ungrounded / policy decisions and risk-weighted-sample the rest (state how many were sampled out); include the how-to-read-this legend; render reverse-prompts, or one explicit all-clear line when nothing needs a human call. Post the scorecard as ONE PR comment via gh. Then print EXACTLY ONE LINE of JSON and nothing else: {\"verdict\":\"clean|escalate|reject\",\"summary\":\"<one sentence>\"}"
+
+        # Parse the last brace-delimited line. Default to escalate on empty/
+        # unparseable output so nothing is waved through silently.
+        OUT=$(claude -p "$PROMPT" --allowedTools "Bash Read Grep Glob mcp__github__*" 2>/dev/null \
+              | grep -oE '\{.*\}' | tail -1 || true)
+        VERDICT=$(jq -r '.verdict // "escalate"' <<<"${OUT:-{}}" 2>/dev/null || echo escalate)
+        SUMMARY=$(jq -r '.summary // "audit output unparseable — review manually"' <<<"${OUT:-{}}" 2>/dev/null \
+                  || echo "audit output unparseable — review manually")
+
+        # -c: the emit MUST be a single line (engine parses last stdout line only)
+        jq -cn --arg v "$VERDICT" --arg s "$SUMMARY" \
+          '{next:"reviewed", merge:{verdict:$v, audit_summary:$s}}'
+
+  # The human gate. The audit informs but never decides — Will picks the branch.
+  - id: review
+    type: human
+    name: Will decides
+    present:
+      - { key: key, as: text }
+      - { key: pr, as: text }
+      - { key: title, as: text }
+      - { key: url, as: link }
+      - { key: verdict, as: text }
+      - { key: audit_summary, as: text }
+    config: {}
+
+  # work: spin up a Tinstar session seeded with the marble's context. The session
+  # finishes/reconciles the PR (resolve conflicts, address the audit's reverse-
+  # prompts, get CI green) and signals the `worked` edge when the PR is ready.
+  - id: work-session
+    type: agent
+    name: Work in a session
+    color: "#22c55e"
+    config:
+      cli_template: "Claude (multi-agent)"
+      project: plus-one
+      keep_session: true
+      brief: |
+        Finish the pipeline PR named in your context (a claude/plusone-* branch
+        parked in Linear's In Review queue). The taste audit's verdict and summary
+        are in your context. Open the worktree, address the audit's reverse-prompts,
+        resolve any merge conflict with plus-one-v2, and get CI green and the PR
+        mergeable. When the PR is ready for a human merge (or you have intentionally
+        handed it off), signal the `worked` edge with a one-line note of what you did.
+
+  # merge: squash-merge. Success -> adapt; a conflict/blocked merge -> a warning
+  # end that tells Will to reconcile first (most of the queue conflicts).
+  - id: merge
+    type: shell
+    name: Merge PR
+    color: "#16a34a"
+    timeout: 120000 # ms
+    config:
+      on_enter: |
+        set -euo pipefail
+        PR=$(jq -r .pr "$WHOACHART_CONTEXT")
+        REPO="${PLUSONE_GH_REPO:-EveryInc/plus-one}"
+        ERRF="$(mktemp)"
+        if gh pr merge "$PR" -R "$REPO" --squash 2>"$ERRF"; then
+          jq -cn --arg p "$PR" '{next:"merged", merge:{decision:"merge", merged_pr:$p}}'
+        else
+          ERR=$(tr '\n' ' ' <"$ERRF" | cut -c1-200)
+          jq -cn --arg e "$ERR" '{next:"blocked", merge:{decision:"merge", merge_error:$e}}'
+        fi
+        rm -f "$ERRF"
+
+  # reject: close the PR. Linear's post-PR sweep (triage loop) moves the ticket
+  # out of In Review + needs-human on a closed-unmerged PR; we leave a clear
+  # close comment as the human signal.
+  - id: reject
+    type: shell
+    name: Reject PR
+    color: "#ef4444"
+    timeout: 120000 # ms
+    config:
+      on_enter: |
+        set -euo pipefail
+        PR=$(jq -r .pr "$WHOACHART_CONTEXT")
+        TICKET=$(jq -r .key "$WHOACHART_CONTEXT")
+        REPO="${PLUSONE_GH_REPO:-EveryInc/plus-one}"
+        gh pr close "$PR" -R "$REPO" \
+          --comment "Pipeline burndown: rejected at human review ($TICKET). Handing back to needs-human; the triage loop's post-PR sweep moves the ticket out of In Review." >/dev/null
+        jq -cn --arg p "$PR" '{merge:{decision:"reject", rejected_pr:$p}}'
+
+  # Adapt: the Check -> Adapt loop's learning capture. Runs ce-compound headless
+  # on the decision so each burndown compounds a learning. The docs/solutions PR
+  # it may open is itself loop-invariant-exempt from the taste-audit above.
+  - id: adapt
+    type: shell
+    name: Adapt (compound)
+    color: "#f59e0b"
+    timeout: 900000 # ms — headless /ce-compound run
+    config:
+      on_enter: |
+        set -euo pipefail
+        cd "${PLUSONE_REPO:-$HOME/repo/plus-one}"
+        PR=$(jq -r .pr "$WHOACHART_CONTEXT")
+        TICKET=$(jq -r .key "$WHOACHART_CONTEXT")
+        DECISION=$(jq -r '.decision // "reviewed"' "$WHOACHART_CONTEXT")
+        PROMPT="Run the loop's Adapt step for the burndown of PR #$PR ($TICKET), decision: $DECISION. Invoke /ce-compound mode:headless to capture any durable learning from this decision — what the taste audit surfaced and why it was worked/merged/rejected. If there is genuinely no durable learning, opt out rather than inventing one. The docs/solutions PR this may produce must NOT re-enter the taste audit (loop invariant)."
+        claude -p "$PROMPT" --allowedTools "Bash Read Grep Glob Edit Write mcp__github__*" >/dev/null 2>&1 || true
+        jq -cn '{merge:{adapted:true}}'
+
+  - id: no-prs
+    type: end
+    name: No pipeline PRs
+    config: { outcome: success }
+
+  - id: scan-done
+    type: end
+    name: Scan done
+    config: { outcome: success }
+
+  - id: loop-skip
+    type: end
+    name: Loop-invariant skip
+    config: { outcome: warning }
+
+  - id: merge-blocked
+    type: end
+    name: Merge blocked (reconcile first)
+    config: { outcome: warning }
+
+  - id: adapted
+    type: end
+    name: Adapted
+    config: { outcome: success }
+
+edges:
+  - { from: scan, to: query-pipeline }
+  - { from: query-pipeline, to: no-prs, name: quiet }
+  - { from: query-pipeline, to: scan-done, name: found }
+  - { from: pr-intake, to: taste-audit }
+  - { from: taste-audit, to: review, name: reviewed }
+  - { from: taste-audit, to: loop-skip, name: skip }
+  - { from: review, to: work-session, name: work }
+  - { from: review, to: merge, name: merge }
+  - { from: review, to: reject, name: reject }
+  - { from: work-session, to: adapt, name: worked }
+  - { from: merge, to: adapt, name: merged }
+  - { from: merge, to: merge-blocked, name: blocked }
+  - { from: reject, to: adapt }
+  - { from: adapt, to: adapted }

@@ -21,3 +21,7 @@ node_modules/
 *.tmp
 # roborev snapshots
 /.roborev/
+
+# Brand assets are intentionally tracked despite the *.png/*.svg rules above
+!docs/assets/**
+!logo-concepts/**
