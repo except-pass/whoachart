@@ -19,6 +19,9 @@ settings.yaml
 node_modules/
 .whoachart/
 *.tmp
+
+# Local chart sources (machine-specific symlinks, e.g. charts/srena -> SREna repo)
+charts/
 # roborev snapshots
 /.roborev/
 
