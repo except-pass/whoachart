@@ -62,6 +62,10 @@ async function main(argv: string[]): Promise<void> {
   if (a.cmd === "charts") {
     const res = await fetch(`${base}/api/charts`)
     console.log(JSON.stringify(await res.json(), null, 2))
+  } else if (a.cmd === "reload") {
+    // Pick up chart files dropped into the store dir since boot — no restart.
+    const res = await fetch(`${base}/api/charts/reload`, { method: "POST" })
+    console.log(JSON.stringify(await res.json(), null, 2))
   } else if (a.cmd === "submit") {
     if (!a.chart) throw new Error("usage: whoachart submit <chart> [--context json] [--workpiece path]")
     const res = await fetch(`${base}/api/charts/${a.chart}/marbles`, {
@@ -83,7 +87,7 @@ async function main(argv: string[]): Promise<void> {
     })
     console.log(JSON.stringify(await res.json(), null, 2))
   } else {
-    console.log("usage: whoachart <charts|submit|marbles|signal> [...]  (--port N)")
+    console.log("usage: whoachart <charts|reload|submit|marbles|signal> [...]  (--port N)")
   }
 }
 

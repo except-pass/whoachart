@@ -103,6 +103,14 @@ export function createControlApi(daemon: Daemon, port: number, opts: ControlApiO
           return json(await daemon.registerChart(await req.text()), 201)
         }
 
+        // POST /api/charts/reload — rescan the store dir and bring live any
+        // newly-dropped chart files, no daemon restart. Mutation → loopback-only.
+        if (req.method === "POST" && url.pathname === "/api/charts/reload") {
+          const blocked = writeGate(addr)
+          if (blocked) return blocked
+          return json(await daemon.loadNewCharts())
+        }
+
         if (p[0] === "api" && p[1] === "charts" && p[2] && p[3] === "def" && req.method === "GET") {
           return json(daemon.def(p[2]))
         }

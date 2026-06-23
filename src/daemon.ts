@@ -1,4 +1,5 @@
 import { readFile, unlink } from "node:fs/promises"
+import { watch } from "node:fs"
 import { join } from "node:path"
 import { parseChart } from "./schema"
 import { ChartStore, ChartError, assertSafeChartName, atomicWrite } from "./chartStore"
@@ -359,6 +360,68 @@ export class Daemon {
       logLine(chart.name, "registered")
       return { name: chart.name, warnings: lint.warnings }
     })
+  }
+
+  // Rescan the chart-store dir and bring live any *.yaml not already loaded —
+  // the "I dropped a file in the dir" path, hot with no restart. Mirrors the
+  // boot store-dir loop: additive-only (edits/deletes stay with update/delete),
+  // skips names already live, and isolates a bad file so one malformed chart
+  // can't sink the rescan. Serialized via mutate() like every other swap.
+  async loadNewCharts(): Promise<{ loaded: string[]; errors: { name: string; error: string }[] }> {
+    if (!this.chartStore) throw new ChartError("chart store not configured (set WHOACHART_CHARTS_DIR)", 501)
+    return this.mutate(async () => {
+      const loaded: string[] = []
+      const errors: { name: string; error: string }[] = []
+      for (const name of await this.chartStore!.listNames()) {
+        if (this.runtimes.has(name)) continue
+        try {
+          const file = await this.chartStore!.resolvePath(name) // honor a legacy .yml
+          const chart = parseChart(await readFile(file, "utf8"))
+          await this.installRuntime(chart, file)
+          logLine(chart.name, "loaded (rescan)")
+          loaded.push(chart.name)
+        } catch (err) {
+          errors.push({ name, error: errMsg(err) })
+        }
+      }
+      return { loaded, errors }
+    })
+  }
+
+  // Opt-in (WHOACHART_WATCH=1): auto-rescan the store dir whenever a file lands,
+  // so dropping a chart in goes live with no manual reload. Coalesces a burst of
+  // fs events (editor temp files, tmp+rename publishes) into one loadNewCharts()
+  // via a trailing debounce, and skips overlapping rescans. Returns a stop fn.
+  watchCharts(debounceMs = 500): () => void {
+    if (!this.chartStore) throw new ChartError("chart store not configured (set WHOACHART_CHARTS_DIR)", 501)
+    const dir = this.chartStore.dir
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let running = false
+    let pending = false
+    const rescan = async (): Promise<void> => {
+      if (running) { pending = true; return } // don't overlap; coalesce into a follow-up
+      running = true
+      try {
+        const { loaded, errors } = await this.loadNewCharts()
+        for (const n of loaded) logLine(n, "auto-loaded (watch)")
+        for (const e of errors) logLine(e.name, `watch load failed: ${e.error}`)
+      } catch (err) {
+        logLine("(watch)", `rescan failed: ${errMsg(err)}`)
+      } finally {
+        running = false
+        if (pending) { pending = false; void rescan() }
+      }
+    }
+    const watcher = watch(dir, () => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => { void rescan() }, debounceMs)
+      ;(timer as unknown as { unref?: () => void }).unref?.()
+    })
+    logLine("(watch)", `watching ${dir} for new charts`)
+    return () => {
+      if (timer) clearTimeout(timer)
+      watcher.close()
+    }
   }
 
   // Replace a chart's definition and hot-reload it WITHOUT losing in-flight

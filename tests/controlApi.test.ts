@@ -75,6 +75,30 @@ test("unknown route returns 404", async () => {
   expect(res.status).toBe(404)
 })
 
+test("POST /api/charts/reload picks up a chart dropped into the store dir", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wc-api-reload-"))
+  await writeFile(join(dir, "demo.yaml"), CHART)
+  const d = new Daemon({ charts: [], chartsDir: dir, storeDir: join(dir, "store"), client: new FakeCanvas() })
+  await d.start()
+  const srv = createControlApi(d, 0)
+  try {
+    const apiBase = `http://localhost:${srv.port}`
+    await writeFile(join(dir, "later.yaml"), CHART.replace("name: demo", "name: later"))
+    const res = await fetch(`${apiBase}/api/charts/reload`, { method: "POST" })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ loaded: ["later"], errors: [] })
+    expect(d.charts().sort()).toEqual(["demo", "later"])
+  } finally {
+    srv.stop(true)
+  }
+})
+
+test("POST /api/charts/reload returns 501 when no chart store is configured", async () => {
+  // the suite-level daemon is built without chartsDir
+  const res = await fetch(`${base}/api/charts/reload`, { method: "POST" })
+  expect(res.status).toBe(501)
+})
+
 test("GET /api/charts/:name/nodes/:id/logs returns a delta and advances the cursor", async () => {
   await fetch(`${base}/api/charts/demo/marbles`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
   // lifecycle events land in the per-node feed even for non-shell nodes

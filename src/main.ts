@@ -65,6 +65,12 @@ async function main(): Promise<void> {
   })
   await daemon.start()
   createControlApi(daemon, port)
+  // Opt-in: auto-pick-up of chart files dropped into the store dir (no restart).
+  // Needs a writable store dir; the manual POST /api/charts/reload always works.
+  if (process.env.WHOACHART_WATCH === "1") {
+    if (chartsDir) daemon.watchCharts()
+    else console.log("[whoachart] WHOACHART_WATCH=1 ignored — no chart store dir (set WHOACHART_CHARTS_DIR)")
+  }
   console.log(`[whoachart] daemon up on :${port} — charts: ${daemon.charts().join(", ") || "(none)"}`)
   for (const name of daemon.charts()) console.log(`[whoachart]   ui: ${publicUrl}/ui/charts/${name}`)
 }
