@@ -12,6 +12,13 @@ nodes:
   - id: prep
     type: shell
     name: Prep
+    # `description` is human-readable docs for what the step DOES, surfaced in
+    # the node drawer, the canvas hover card, and the /def API (so an agent can
+    # understand the procedure without reading the shell). `doc` links a runbook.
+    description: >
+      Normalizes the incoming draft and flags it as prepped before it reaches
+      the reviewer. No side effects beyond stamping context.
+    doc: https://runbooks.example.com/review/prep
     config:
       on_enter: |
         echo '{"merge":{"prepped":true}}'
@@ -20,6 +27,9 @@ nodes:
     type: agent
     name: Expert review
     color: "#a78bfa"
+    description: >
+      Routes the draft to a real agent session for a factual + tone pass.
+      Blocks until the agent signals approve (→ published) or reject (→ rejected).
     config:
       brief: >
         Review the draft described in the context. Check it for factual

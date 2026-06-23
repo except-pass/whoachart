@@ -33,6 +33,24 @@ function kv(k, v) {
   return `<div class="kv"><span class="k">${escHtml(k)}</span><span class="v">${escHtml(String(v))}</span></div>`
 }
 
+// What this step DOES, independent of the code it runs. `description` is
+// markdown — rendered as plain text (line breaks preserved by CSS) for v1,
+// matching the present-spec renderer in drawer.js. `doc` is a runbook/skill
+// link: only http(s) becomes a clickable <a>, otherwise it's shown verbatim.
+function docsSection(node) {
+  const parts = []
+  if (typeof node.description === "string" && node.description.trim()) {
+    parts.push(`<div class="present"><pre class="nodedesc">${escHtml(node.description)}</pre></div>`)
+  }
+  if (typeof node.doc === "string" && node.doc.trim()) {
+    const link = /^https?:\/\//i.test(node.doc)
+      ? `<a href="${escHtml(node.doc)}" target="_blank" rel="noopener" style="color:var(--cyan)">${escHtml(node.doc)}</a>`
+      : escHtml(node.doc)
+    parts.push(`<div class="present"><span class="pk">runbook</span>${link}</div>`)
+  }
+  return parts.length ? `<div class="section"><div class="sh">what this does</div>${parts.join("")}</div>` : ""
+}
+
 // === 1b SEAM ==============================================================
 // Live per-node / per-marble output streaming plugs in HERE, and ONLY here.
 // #nodeLiveOutput is the only durable anchor in the node view: it is created
@@ -170,6 +188,7 @@ export function renderNodeBody(node, stats, marbles, ends) {
     </div>
     ${kv("id", node.id)}
     ${meta}
+    ${docsSection(node)}
     <div class="section"><div class="sh">code &amp; config</div>${code.join("") || `<span style="color:var(--dim)">no config</span>`}</div>
     ${present}
     ${statsHtml}

@@ -18,6 +18,8 @@ const nodeSchema = z.object({
   id: z.string(),
   type: z.string(),
   name: z.string().optional(),
+  description: z.string().optional(),
+  doc: z.string().optional(),
   color: z.string().optional(),
   on_leave: z.string().optional(),
   retry: z.object({ max: z.number().int().nonnegative() }).optional(),

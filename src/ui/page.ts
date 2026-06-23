@@ -97,6 +97,7 @@ pre.json{background:#06090d;border:1px solid #15202b;border-radius:7px;padding:8
 .present{background:#0a1118;border:1px solid #1b2836;border-radius:7px;padding:8px 10px;margin:8px 0;
   font-size:11.5px;line-height:1.6;white-space:pre-wrap}
 .present .pk{color:var(--dim);font:10px monospace;display:block;margin-bottom:2px}
+pre.nodedesc{margin:0;font:inherit;color:var(--ink);white-space:pre-wrap;word-break:break-word}
 button.act{display:inline-block;margin:4px 6px 4px 0;padding:6px 12px;border-radius:7px;font-size:11.5px;
   border:1px solid var(--cyan);color:#bff4ff;background:#0f2630;cursor:pointer}
 button.act.danger{border-color:var(--red);color:#ffc9c9;background:#2a0f12}

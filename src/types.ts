@@ -30,6 +30,12 @@ export interface ChartNode {
   id: string
   type: NodeKind
   name?: string
+  // Human-readable docs for what this step DOES, independent of the code it
+  // runs. `description` is a markdown string (operator- and agent-facing);
+  // `doc` is a link/path to an external runbook or skill. Both are surfaced in
+  // the node drawer, the canvas hover card, and the /def API for agents.
+  description?: string
+  doc?: string
   color?: string
   on_leave?: string
   retry?: { max: number }

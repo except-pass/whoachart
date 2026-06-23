@@ -104,6 +104,9 @@ nodes:
   - id: build
     type: shell             # runs a command; can merge data into the marble's context
     name: Build
+    description: >          # human-readable docs for what this step does
+      Compiles the project and uploads build artifacts.
+    doc: https://runbooks.example.com/build   # optional link to a runbook/skill
     config:
       on_enter: |
         echo "building..."
@@ -126,6 +129,11 @@ nodes:
 - **shell** — runs `config.on_enter`; emit `{"merge": {...}}` on stdout to enrich the marble's context.
 - **decision** — emit `{"next": "<edge-name>"}` to choose the outgoing edge.
 - **end** — terminal; records an `outcome`.
+
+Any node can also carry **docs**, separate from the code it runs:
+
+- **`description`** — a markdown string explaining what the step does. Surfaced in the node drawer (a "what this does" section above the code), in the canvas hover card, and in the `/def` API so an agent routing through the chart can understand each step without reading shell.
+- **`doc`** — an optional link to an external runbook or skill (`http(s)` URLs become clickable in the drawer).
 
 Routing is **node-centric**: a node decides which edge the marble takes next, so the same chart reads cleanly whether it has one path or ten.
 

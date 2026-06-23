@@ -6,6 +6,8 @@ export function renderNodeBody(
     id: string
     type: string
     name?: string
+    description?: string
+    doc?: string
     color?: string
     present?: { key: string; as: string }[]
     stuck_after?: number

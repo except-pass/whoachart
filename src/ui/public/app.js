@@ -366,8 +366,15 @@ function showHover(nodeId, ev) {
   const s = lastState.stats[nodeId]
   const queued = lastState.live.filter((m) => m.node === nodeId && m.status === "queued").length
   const card = $("hovercard")
+  // One-line gist of what the step does, when documented. Clamp so a long
+  // description doesn't blow out the floating card; the drawer shows it in full.
+  const desc = NODE[nodeId]?.description
+  const descLine = desc && desc.trim()
+    ? `<span style="color:var(--dim);display:block;max-width:200px;white-space:normal;margin:2px 0 4px">${escHtml(desc.length > 120 ? desc.slice(0, 117) + "…" : desc)}</span>`
+    : ""
   card.innerHTML =
     `<b>${escHtml(NODE[nodeId]?.name ?? nodeId)}</b><br/>` +
+    descLine +
     (s
       ? `runs ${s.runs} · fails ${s.fails}<br/>dwell p50 ${s.dwellP50 != null ? fmtMs(s.dwellP50) : "—"} · p95 ${s.dwellP95 != null ? fmtMs(s.dwellP95) : "—"}<br/>`
       : `no runs yet<br/>`) +

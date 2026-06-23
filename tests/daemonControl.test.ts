@@ -83,6 +83,8 @@ nodes:
     config: { trigger: api }
   - id: build
     type: shell
+    description: "Compiles the project and uploads build artifacts."
+    doc: "https://runbooks/build"
     on_leave: "echo left build"
     timeout: 5000
     retry: { max: 2 }
@@ -119,6 +121,10 @@ test("def exposes node config, lifecycle hooks, and the agent brief", async () =
   expect(build.on_leave).toBe("echo left build")
   expect(build.timeout).toBe(5000)
   expect(build.retry).toEqual({ max: 2 })
+  // node docs pass through verbatim so agents reading /def for routing can see
+  // what each step does without parsing shell
+  expect(build.description).toBe("Compiles the project and uploads build artifacts.")
+  expect(build.doc).toBe("https://runbooks/build")
 
   const review = def.nodes.find((n) => n.id === "review")!
   expect((review.config as any).brief).toBe("Review the workpiece and decide.")

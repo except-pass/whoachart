@@ -49,3 +49,15 @@ test("rejects invalid per-type config", () => {
   const bad = good.replace('config: { on_enter: "echo hi" }', "config: {}")
   expect(() => parseChart(bad)).toThrow()
 })
+
+test("parses optional node description and doc", () => {
+  const withDocs = good.replace(
+    "    type: shell\n",
+    '    type: shell\n    description: "Compiles the project and uploads artifacts."\n    doc: "https://runbooks/build"\n',
+  )
+  const chart = parseChart(withDocs)
+  expect(chart.nodes[0].description).toBe("Compiles the project and uploads artifacts.")
+  expect(chart.nodes[0].doc).toBe("https://runbooks/build")
+  // omitting them leaves the fields undefined, not an error
+  expect(chart.nodes[1].description).toBeUndefined()
+})

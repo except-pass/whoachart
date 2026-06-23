@@ -51,6 +51,42 @@ test("renderNodeBody shows the agent brief", () => {
   expect(html).toContain("keep_session") // remaining config
 })
 
+test("renderNodeBody surfaces description and a doc link above the config", () => {
+  const node = {
+    id: "build",
+    type: "shell",
+    description: "Compiles the project and uploads artifacts.",
+    doc: "https://runbooks/build",
+    config: { on_enter: "make" },
+  }
+  const html = renderNodeBody(node, null, [], null)
+  expect(html).toContain("what this does")
+  expect(html).toContain("Compiles the project and uploads artifacts.")
+  expect(html).toContain('href="https://runbooks/build"')
+  // docs section comes before the code & config section
+  expect(html.indexOf("what this does")).toBeLessThan(html.indexOf("code &amp; config"))
+})
+
+test("renderNodeBody renders a non-url doc as plain text, not a link", () => {
+  const node = { id: "x", type: "shell", doc: "see SRE wiki / runbook 12", config: {} }
+  const html = renderNodeBody(node, null, [], null)
+  expect(html).toContain("see SRE wiki / runbook 12")
+  expect(html).not.toContain("<a href")
+})
+
+test("renderNodeBody omits the docs section when neither description nor doc is set", () => {
+  const html = renderNodeBody(shellNode, stats, [], null)
+  expect(html).not.toContain("what this does")
+})
+
+test("renderNodeBody escapes hostile description and doc", () => {
+  const node = { id: "x", type: "shell", description: "<script>alert(1)</script>", doc: "<img>", config: {} }
+  const html = renderNodeBody(node, null, [], null)
+  expect(html).not.toContain("<script>")
+  expect(html).toContain("&lt;script&gt;")
+  expect(html).not.toContain("<img>")
+})
+
 test("renderNodeBody renders live stats, falling back to em-dash when absent", () => {
   expect(renderNodeBody(shellNode, stats, [], null)).toContain("3") // runs
   const noStats = renderNodeBody(shellNode, null, [], null)

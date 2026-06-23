@@ -114,6 +114,10 @@ export interface ChartDef {
     id: string
     type: string
     name?: string
+    // Human-readable docs (markdown) + external runbook link. Surfaced to
+    // operators (drawer/hover) and to agents reading /def for procedure routing.
+    description?: string
+    doc?: string
     color?: string
     present?: PresentSpec[]
     stuck_after?: number
@@ -480,6 +484,10 @@ export class Daemon {
         id: n.id,
         type: n.type,
         name: n.name,
+        // Docs are intentionally NOT run through redactSecrets — they're
+        // human-authored prose, not config values that might carry credentials.
+        description: n.description,
+        doc: n.doc,
         color: n.color,
         present: n.present,
         stuck_after: n.stuck_after,
