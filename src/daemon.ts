@@ -1,6 +1,6 @@
 import { readFile, unlink } from "node:fs/promises"
 import { watch } from "node:fs"
-import { join } from "node:path"
+import { join, basename } from "node:path"
 import { parseChart } from "./schema"
 import { ChartStore, ChartError, assertSafeChartName, atomicWrite } from "./chartStore"
 import { lintChart, type LintWarning } from "./lint"
@@ -178,6 +178,10 @@ export class Daemon {
   private spaceId?: string
   private createdWidgets: Array<{ chart: string; widgetId: string }> = []
   private chartStore?: ChartStore
+  // Charts that failed to parse/install at boot. Boot SKIPS a bad chart and
+  // records it here rather than crashing the whole daemon (a single malformed
+  // file must not take down every other chart). Inspect after start().
+  readonly bootErrors: { name: string; error: string }[] = []
   // Serializes all chart-store mutations so two concurrent PUT/POST/DELETEs can't
   // interleave engine swaps. A rejected mutation must not wedge the chain.
   // TODO(perf): this is a single GLOBAL lock — a hung reload on one chart head-of-
@@ -239,10 +243,11 @@ export class Daemon {
       }
     }
 
-    // Explicit boot-load list (existing behavior).
+    // Explicit boot-load list (existing behavior). A malformed chart is skipped
+    // and recorded (bootErrors) — one bad file must not crash the daemon.
     for (const path of this.opts.charts ?? []) {
-      const chart = parseChart(await readFile(path, "utf8"))
-      await this.installRuntime(chart, path)
+      const name = basename(path).replace(/\.ya?ml$/, "")
+      await this.bootLoad(name, path)
     }
     // Store-dir charts (CRUD-managed). Skip names already loaded above so a dir
     // that overlaps the explicit list (the common default) isn't double-loaded.
@@ -250,9 +255,21 @@ export class Daemon {
       for (const name of await this.chartStore.listNames()) {
         if (this.runtimes.has(name)) continue
         const file = await this.chartStore.resolvePath(name) // honor a legacy .yml
-        const chart = parseChart(await readFile(file, "utf8"))
-        await this.installRuntime(chart, file)
+        await this.bootLoad(name, file)
       }
+    }
+  }
+
+  // Parse + install one chart at boot, isolating failure: a bad file is logged
+  // and recorded in bootErrors instead of bubbling up and crashing start().
+  private async bootLoad(name: string, file: string): Promise<void> {
+    try {
+      const chart = parseChart(await readFile(file, "utf8"))
+      await this.installRuntime(chart, file)
+    } catch (err) {
+      const error = errMsg(err)
+      this.bootErrors.push({ name, error })
+      logLine(name, `boot-load skipped (invalid chart): ${error}`)
     }
   }
 
@@ -398,7 +415,9 @@ export class Daemon {
     let timer: ReturnType<typeof setTimeout> | undefined
     let running = false
     let pending = false
+    let disposed = false // stop() means stop: short-circuit any queued/in-flight rescan
     const rescan = async (): Promise<void> => {
+      if (disposed) return
       if (running) { pending = true; return } // don't overlap; coalesce into a follow-up
       running = true
       try {
@@ -409,7 +428,7 @@ export class Daemon {
         logLine("(watch)", `rescan failed: ${errMsg(err)}`)
       } finally {
         running = false
-        if (pending) { pending = false; void rescan() }
+        if (pending && !disposed) { pending = false; void rescan() }
       }
     }
     const watcher = watch(dir, () => {
@@ -417,8 +436,13 @@ export class Daemon {
       timer = setTimeout(() => { void rescan() }, debounceMs)
       ;(timer as unknown as { unref?: () => void }).unref?.()
     })
+    // fs.watch can emit 'error' (inotify watch exhaustion, dir removed) — without
+    // a handler that surfaces as an unhandled event and crashes the daemon. Log
+    // and degrade to manual reload instead.
+    watcher.on("error", (err) => logLine("(watch)", `watcher error (auto-pickup disabled): ${errMsg(err)}`))
     logLine("(watch)", `watching ${dir} for new charts`)
     return () => {
+      disposed = true
       if (timer) clearTimeout(timer)
       watcher.close()
     }

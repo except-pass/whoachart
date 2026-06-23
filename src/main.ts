@@ -72,6 +72,9 @@ async function main(): Promise<void> {
     else console.log("[whoachart] WHOACHART_WATCH=1 ignored — no chart store dir (set WHOACHART_CHARTS_DIR)")
   }
   console.log(`[whoachart] daemon up on :${port} — charts: ${daemon.charts().join(", ") || "(none)"}`)
+  for (const e of daemon.bootErrors) {
+    console.error(`[whoachart] skipped invalid chart "${e.name}": ${e.error}`)
+  }
   for (const name of daemon.charts()) console.log(`[whoachart]   ui: ${publicUrl}/ui/charts/${name}`)
 }
 

@@ -101,6 +101,25 @@ test("watchCharts auto-loads a chart dropped into the dir, then stops on dispose
   expect(d.charts().includes("after")).toBe(false)
 })
 
+test("boot skips a malformed chart instead of crashing, and records it in bootErrors", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wc-boot-bad-"))
+  await writeFile(join(dir, "good.yaml"), chart("good"))
+  await writeFile(join(dir, "broken.yaml"), "name: broken\nnodes: [oops not a node]\n")
+  const d = new Daemon({
+    charts: [join(dir, "good.yaml"), join(dir, "broken.yaml")],
+    chartsDir: dir,
+    storeDir: join(dir, "store"),
+    client: new FakeCanvas(),
+    launcher: new FakeLauncher(),
+  })
+
+  await d.start() // must NOT throw
+
+  expect(d.charts()).toEqual(["good"])
+  expect(d.bootErrors.map((e) => e.name)).toContain("broken")
+  expect(d.bootErrors.find((e) => e.name === "broken")!.error).toBeTruthy()
+})
+
 test("loadNewCharts requires a chart store (501 when none configured)", async () => {
   const dir = await mkdtemp(join(tmpdir(), "wc-reload-nostore-"))
   await writeFile(join(dir, "first.yaml"), chart("first"))
