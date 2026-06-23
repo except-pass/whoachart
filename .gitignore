@@ -25,3 +25,4 @@ node_modules/
 # Brand assets are intentionally tracked despite the *.png/*.svg rules above
 !docs/assets/**
 !logo-concepts/**
+!tinstar-plugin/icon.png

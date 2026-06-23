@@ -25,7 +25,7 @@
         {
           "type": "whoachart-chart",
           "label": "Whoachart",
-          "icon": "icon.svg",
+          "icon": "icon.png",
           "primitive": "browser",
           "defaultSize": {
             "width": 1100,
