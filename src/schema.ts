@@ -27,7 +27,15 @@ const nodeSchema = z.object({
   position: z.object({ x: z.number(), y: z.number() }).optional(),
   stuck_after: z.number().int().positive().optional(),
   present: z
-    .array(z.object({ key: z.string(), as: z.enum(["markdown", "json", "text", "link"]).default("text") }))
+    .array(
+      z.object({
+        key: z.string(),
+        as: z.enum(["markdown", "markdown_file", "json", "text", "link"]).default("text"),
+        // PRIMARY entries render prominently at the top of the gate (the
+        // decision itself); the rest demote to a collapsible evidence footer.
+        primary: z.boolean().optional(),
+      }),
+    )
     .optional(),
   config: z.record(z.unknown()).default({}),
 })

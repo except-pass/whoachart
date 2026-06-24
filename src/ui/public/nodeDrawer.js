@@ -8,6 +8,7 @@
 // clearNodeDrawer). All data comes from the existing /def + /state payloads; no
 // per-node fetch.
 import { escHtml, fmtMs, hue } from "./helpers.js"
+import { renderMarkdown } from "./markdown.js"
 
 const body = () => document.getElementById("drawerBody")
 
@@ -34,13 +35,13 @@ function kv(k, v) {
 }
 
 // What this step DOES, independent of the code it runs. `description` is
-// markdown — rendered as plain text (line breaks preserved by CSS) for v1,
-// matching the present-spec renderer in drawer.js. `doc` is a runbook/skill
-// link: only http(s) becomes a clickable <a>, otherwise it's shown verbatim.
+// markdown — rendered as real markdown (shared renderer with the gate present
+// specs). `doc` is a runbook/skill link: only http(s) becomes a clickable <a>,
+// otherwise it's shown verbatim.
 function docsSection(node) {
   const parts = []
   if (typeof node.description === "string" && node.description.trim()) {
-    parts.push(`<div class="present"><pre class="nodedesc">${escHtml(node.description)}</pre></div>`)
+    parts.push(`<div class="present"><div class="md">${renderMarkdown(node.description)}</div></div>`)
   }
   if (typeof node.doc === "string" && node.doc.trim()) {
     const link = /^https?:\/\//i.test(node.doc)
@@ -156,7 +157,7 @@ export function renderNodeBody(node, stats, marbles, ends) {
 
   const present = node.present?.length
     ? `<div class="section"><div class="sh">present · gate display</div>${node.present
-        .map((p) => kv(p.key, p.as))
+        .map((p) => kv(p.key, p.primary === true || p.key === "decision" ? `${p.as} · primary` : p.as))
         .join("")}</div>`
     : ""
 

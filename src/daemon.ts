@@ -12,7 +12,7 @@ import { Engine, newMarble, type EngineEvent } from "./engine"
 import { ViewState, type ViewSnapshot } from "./view/viewState"
 import { LogBuffer, type LogDelta } from "./view/logBuffer"
 import { layoutChart, type Layout, type NodeBox } from "./view/layout"
-import { now } from "./util"
+import { now, deepMerge } from "./util"
 import { validateForm } from "./forms"
 import type { CanvasControl, SessionLauncher, SpawnSessionOpts } from "./tinstar"
 import type { Chart, ChartNode, FormField, Marble, PresentSpec } from "./types"
@@ -669,6 +669,46 @@ export class Daemon {
         }
       }
     })
+  }
+
+  // Merge context into a marble WITHOUT advancing it — the agent's "inject a
+  // decision brief while it sits at the gate" verb. Deep-merges `merge` into
+  // marble.context and persists; it deliberately does NOT touch edges/engine, so
+  // a blocked marble stays blocked and the operator still makes the call.
+  // Serialized with chart mutations so it can't land on a runtime mid-swap.
+  async annotate(name: string, id: string, merge: Record<string, unknown>): Promise<Marble> {
+    return this.mutate(async () => {
+      const rt = this.rt(name)
+      const m = await rt.store.load(id)
+      if (!m) throw new ChartError(`marble not found: ${id}`, 404)
+      m.context = deepMerge(m.context, merge)
+      m.updatedAt = now()
+      await rt.store.save(m)
+      rt.view.apply(m) // keep the live aggregate's view of this marble fresh
+      logLine(name, `annotated marble=${id} keys=${Object.keys(merge).join(",") || "-"}`)
+      return m
+    })
+  }
+
+  // Resolve an `as: markdown_file` present entry to the file's text. The path is
+  // taken from the marble's CONTEXT (the present spec names the key) — never from
+  // a caller-supplied path — so this reads no more than annotate/emit already
+  // wrote. Returns null when the chart/marble/spec/file isn't found or readable.
+  async presentFile(name: string, id: string, key: string): Promise<{ path: string; markdown: string } | null> {
+    const rt = this.runtimes.get(name)
+    if (!rt) return null
+    const m = await rt.store.load(id)
+    if (!m) return null
+    const node = this.nodeById(rt, m.node)
+    const spec = node?.present?.find((p) => p.key === key && p.as === "markdown_file")
+    if (!spec) return null
+    const path = m.context[key]
+    if (typeof path !== "string" || !path) return null
+    try {
+      return { path, markdown: await readFile(path, "utf8") }
+    } catch {
+      return null
+    }
   }
 
   // Bounded live view aggregate for the UI to poll. O(1) — no store scans.

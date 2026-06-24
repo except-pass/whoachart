@@ -7,7 +7,7 @@ import { serveStatic } from "./ui/static"
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
 }
 
@@ -165,6 +165,25 @@ export function createControlApi(daemon: Daemon, port: number, opts: ControlApiO
             const body = (await req.json().catch(() => ({}))) as any
             await daemon.signal(name, p[4], { next: body.next, merge: body.merge })
             return json({ ok: true })
+          }
+          // PATCH marble context — merge a brief into a marble WITHOUT advancing
+          // it past its gate (the `annotate` verb). Same base trust gate as
+          // signal: it mutates run-state but installs no code, so it is NOT
+          // restricted to loopback the way chart writes are.
+          if (req.method === "PATCH" && p[4] && p[5] === "context") {
+            const body = (await req.json().catch(() => ({}))) as any
+            const merge = body && typeof body.merge === "object" && body.merge ? body.merge : undefined
+            if (!merge) return json({ error: "expected { merge: {...} }" }, 400)
+            const m = await daemon.annotate(name, p[4], merge)
+            return json({ id: m.id, context: m.context })
+          }
+          // GET an `as: markdown_file` present entry's file contents (UI inlines
+          // it). Path comes from marble context, never the query string.
+          if (req.method === "GET" && p[4] && p[5] === "present-file") {
+            const key = url.searchParams.get("key")
+            if (!key) return json({ error: "missing ?key" }, 400)
+            const res = await daemon.presentFile(name, p[4], key)
+            return res ? json(res) : json({ error: "present file not found" }, 404)
           }
           if (req.method === "GET" && p[4]) {
             const m = await daemon.marble(name, p[4])

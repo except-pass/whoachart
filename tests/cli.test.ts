@@ -41,3 +41,12 @@ test("parses signal command with next and merge", () => {
   expect(a.next).toBe("pass")
   expect(a.merge).toEqual({ v: 1 })
 })
+
+test("parses annotate command with chart, marble, and merge", () => {
+  const a = parseArgs(["annotate", "gated", "m1", "--merge", '{"decision":"go"}'])
+  expect(a.cmd).toBe("annotate")
+  expect(a.chart).toBe("gated")
+  expect(a.marble).toBe("m1")
+  expect(a.merge).toEqual({ decision: "go" })
+  expect(a.next).toBeUndefined() // annotate never advances an edge
+})

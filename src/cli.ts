@@ -35,7 +35,7 @@ export function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = { cmd, port }
 
   if (cmd === "submit" || cmd === "marbles") args.chart = positional[1]
-  if (cmd === "signal") { args.chart = positional[1]; args.marble = positional[2] }
+  if (cmd === "signal" || cmd === "annotate") { args.chart = positional[1]; args.marble = positional[2] }
   if (flags.has("next")) args.next = flags.get("next")
   if (flags.has("merge")) {
     try {
@@ -86,8 +86,20 @@ async function main(argv: string[]): Promise<void> {
       body: JSON.stringify({ next: a.next, merge: a.merge }),
     })
     console.log(JSON.stringify(await res.json(), null, 2))
+  } else if (a.cmd === "annotate") {
+    // Merge context into a marble WITHOUT advancing it past its gate — inject a
+    // decision brief while the operator looks at the blocked marble.
+    if (!a.chart || !a.marble || !a.merge) {
+      throw new Error("usage: whoachart annotate <chart> <marble> --merge json")
+    }
+    const res = await fetch(`${base}/api/charts/${a.chart}/marbles/${a.marble}/context`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ merge: a.merge }),
+    })
+    console.log(JSON.stringify(await res.json(), null, 2))
   } else {
-    console.log("usage: whoachart <charts|reload|submit|marbles|signal> [...]  (--port N)")
+    console.log("usage: whoachart <charts|reload|submit|marbles|signal|annotate> [...]  (--port N)")
   }
 }
 
