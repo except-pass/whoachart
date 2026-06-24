@@ -98,6 +98,31 @@ pre.json{background:#06090d;border:1px solid #15202b;border-radius:7px;padding:8
   font-size:11.5px;line-height:1.6;white-space:pre-wrap}
 .present .pk{color:var(--dim);font:10px monospace;display:block;margin-bottom:2px}
 pre.nodedesc{margin:0;font:inherit;color:var(--ink);white-space:pre-wrap;word-break:break-word}
+/* primary gate brief — the decision itself, prominent at the top of the gate */
+.decision-primary{background:#170f28;border:1px solid var(--violet);border-left-width:3px;
+  border-radius:8px;padding:10px 12px;margin:8px 0 12px;font-size:12.5px;line-height:1.6;color:var(--ink)}
+/* rendered-markdown typography (present as:markdown / markdown_file, node desc) */
+.md{font-size:12px;line-height:1.6;color:var(--ink);word-break:break-word}
+.md>*:first-child{margin-top:0}.md>*:last-child{margin-bottom:0}
+.md p{margin:6px 0}
+.md .mdh{margin:10px 0 4px;color:#e9deff;line-height:1.3}
+.md h1.mdh{font-size:15px}.md h2.mdh{font-size:13.5px}.md h3.mdh{font-size:12.5px}.md h4.mdh{font-size:11.5px}
+.md ul,.md ol{margin:6px 0;padding-left:20px}.md li{margin:2px 0}
+.md code{background:#06090d;border:1px solid #15202b;border-radius:4px;padding:0 4px;font:11px monospace;color:#7fd7c4}
+.md pre.mdcode{background:#06090d;border:1px solid #15202b;border-radius:7px;padding:8px;
+  font:10.5px monospace;color:#9fe6d6;line-height:1.55;white-space:pre-wrap;word-break:break-word;margin:6px 0}
+.md blockquote{margin:6px 0;padding:2px 10px;border-left:2px solid #3a4a5a;color:var(--dim)}
+.md a{color:var(--cyan)}.md hr{border:none;border-top:1px solid #1b2836;margin:8px 0}
+.md strong{color:#fff}.md em{color:#d8d0e6}
+.mdfile-load{font:10.5px monospace;color:var(--dim)}
+.mdfile-miss{font:10.5px monospace;color:var(--amber)}
+/* evidence footer — demoted paths/counts/links, collapsed by default */
+details.evidence{margin-top:8px}
+details.evidence>summary{cursor:pointer;font-size:10px;color:var(--dim);letter-spacing:1px;
+  text-transform:uppercase;list-style:none}
+details.evidence>summary::before{content:"▸ ";color:var(--dim)}
+details.evidence[open]>summary::before{content:"▾ "}
+details.evidence>summary:hover{color:var(--cyan)}
 button.act{display:inline-block;margin:4px 6px 4px 0;padding:6px 12px;border-radius:7px;font-size:11.5px;
   border:1px solid var(--cyan);color:#bff4ff;background:#0f2630;cursor:pointer}
 button.act.danger{border-color:var(--red);color:#ffc9c9;background:#2a0f12}

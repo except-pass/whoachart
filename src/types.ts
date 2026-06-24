@@ -23,7 +23,12 @@ export interface FormField {
 
 export interface PresentSpec {
   key: string
-  as: "markdown" | "json" | "text" | "link"
+  // `markdown` renders inline as real markdown; `markdown_file` treats the
+  // value as a path the UI fetches + inlines. PRIMARY entries (primary:true or
+  // the conventional `decision` key) render prominently at the top of the gate;
+  // everything else demotes to the collapsible evidence footer.
+  as: "markdown" | "markdown_file" | "json" | "text" | "link"
+  primary?: boolean
 }
 
 export interface ChartNode {

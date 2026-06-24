@@ -2,10 +2,19 @@
 // decision buttons (with edge forms), session focus, retry.
 import { escHtml, fmtMs, hue, isDangerEdge, trailSteps } from "./helpers.js"
 import { renderForm, readForm, showFieldErrors } from "./forms.js"
+import { renderMarkdown } from "./markdown.js"
+
+// Cache of fetched `as: markdown_file` bodies, keyed by marble|key|path so a
+// changed path re-fetches. Values: { ok:true, text } or { ok:false } (a missing
+// file is cached too, so we don't refetch it every poll). Module-scoped so it
+// survives the per-poll re-renders of showMarble.
+const fileCache = new Map()
+const fileKey = (id, key, path) => `${id}|${key}|${path}`
 
 const body = () => document.getElementById("drawerBody")
 
 let current = null // marble id the drawer is showing
+let currentGate = null // gate info for the shown marble (so async file hydration can re-render)
 let lastRender = "" // change-detection key so polling doesn't flicker the DOM
 let stepSel = null // selected trail step for state time-travel (null = latest)
 let fetchSeq = 0 // discard out-of-order marble fetches from overlapping polls
@@ -74,31 +83,75 @@ function statePanel(m, steps, sel) {
   return `<div class="present"><span class="pk">${sel === 0 ? `intake state · ${escHtml(s.node)}` : title}</span>${body}</div>`
 }
 
+// A present entry is PRIMARY (rendered prominently at the top of the gate) when
+// it opts in with primary:true OR uses the conventional `decision` key. Everything
+// else is evidence — paths, counts, raw json — demoted to a collapsible footer.
+function isPrimary(p) {
+  return p.primary === true || p.key === "decision"
+}
+
+// Render one present entry's VALUE to HTML. markdown_file emits a placeholder
+// the caller fills in asynchronously (see hydrateFiles); everything else is
+// synchronous. `id` is the marble id (needed for the file cache key).
+function renderPresentValue(id, p, v) {
+  switch (p.as) {
+    case "markdown":
+      return `<div class="md">${renderMarkdown(String(v))}</div>`
+    case "markdown_file": {
+      const path = String(v)
+      const cached = fileCache.get(fileKey(id, p.key, path))
+      if (cached?.ok) return `<div class="md">${renderMarkdown(cached.text)}</div>`
+      if (cached) return `<div class="mdfile-miss">could not read ${escHtml(path)}</div>`
+      // Not fetched yet — placeholder hydrateFiles() will replace in place.
+      return `<div class="mdfile-load" data-mdfile-key="${escHtml(p.key)}" data-mdfile-path="${escHtml(path)}">loading ${escHtml(path)}…</div>`
+    }
+    case "json":
+      return `<pre class="json">${escHtml(JSON.stringify(v, null, 2))}</pre>`
+    case "link":
+      // context values are agent/user-supplied — only http(s) gets an <a>
+      return /^https?:\/\//i.test(String(v))
+        ? `<a href="${escHtml(String(v))}" target="_blank" rel="noopener" style="color:var(--cyan)">${escHtml(String(v))}</a>`
+        : escHtml(String(v))
+    default:
+      return escHtml(String(v))
+  }
+}
+
 function presentHtml(m, gate) {
   const specs = gate?.present
   if (!specs || specs.length === 0) return ""
-  return specs
-    .map((p) => {
-      const v = p.key === "workpiece" ? m.workpiece : m.context[p.key]
-      if (v === undefined || v === null || v === "") return ""
-      let rendered
-      switch (p.as) {
-        case "json":
-          rendered = `<pre class="json">${escHtml(JSON.stringify(v, null, 2))}</pre>`
-          break
-        case "link":
-          // context values are agent/user-supplied — only http(s) gets an <a>
-          rendered = /^https?:\/\//i.test(String(v))
-            ? `<a href="${escHtml(String(v))}" target="_blank" rel="noopener" style="color:var(--cyan)">${escHtml(String(v))}</a>`
-            : escHtml(String(v))
-          break
-        // markdown renders as plain text for v1 — line breaks preserved by the CSS
-        default:
-          rendered = escHtml(String(v))
-      }
-      return `<div class="present"><span class="pk">${escHtml(p.key)}</span>${rendered}</div>`
+  const primary = []
+  const evidence = []
+  for (const p of specs) {
+    const v = p.key === "workpiece" ? m.workpiece : m.context[p.key]
+    if (v === undefined || v === null || v === "") continue
+    const rendered = renderPresentValue(m.id, p, v)
+    if (isPrimary(p)) {
+      // The decision speaks for itself — no key label above a primary brief.
+      primary.push(`<div class="decision-primary">${rendered}</div>`)
+    } else {
+      evidence.push(`<div class="present"><span class="pk">${escHtml(p.key)}</span>${rendered}</div>`)
+    }
+  }
+  const evidenceHtml = evidence.length
+    ? `<details class="evidence"><summary>evidence · ${evidence.length}</summary>${evidence.join("")}</details>`
+    : ""
+  return primary.join("") + evidenceHtml
+}
+
+// After the drawer's HTML is in the DOM, fetch any `as: markdown_file` bodies
+// and swap them in. Each placeholder is replaced exactly once; the result is
+// cached so the next poll renders it synchronously (no flicker, no refetch).
+function hydrateFiles(el, id, api) {
+  for (const ph of el.querySelectorAll(".mdfile-load[data-mdfile-key]")) {
+    const key = ph.dataset.mdfileKey
+    const path = ph.dataset.mdfilePath
+    void api.presentFile(id, key).then((res) => {
+      fileCache.set(fileKey(id, key, path), res ? { ok: true, text: res.markdown } : { ok: false })
+      lastRender = "" // force the next showMarble to repaint with the hydrated body
+      void showMarble(id, currentGate, api)
     })
-    .join("")
+  }
 }
 
 function decisionHtml(gate) {
@@ -117,6 +170,7 @@ function decisionHtml(gate) {
 export async function showMarble(id, gateInfo, api) {
   if (current !== id) stepSel = null // new marble: back to latest state
   current = id
+  currentGate = gateInfo
   const seq = ++fetchSeq
   const m = await api.marble(id)
   if (!m || current !== id || seq !== fetchSeq) return
@@ -149,6 +203,8 @@ export async function showMarble(id, gateInfo, api) {
     ${stepSel !== null ? `<div class="pinhint">pinned to a past step · <span class="resume" id="dResumeLive">⏵ resume live</span></div>` : ""}
     ${statePanel(m, steps, sel)}</div>
   `
+
+  hydrateFiles(el, id, api) // fetch + inline any as:markdown_file present bodies
 
   el.querySelector("#dFocus")?.addEventListener("click", () => api.focusSession(id))
   el.querySelector("#dRetry")?.addEventListener("click", () => api.retry(id))

@@ -88,6 +88,11 @@ const API = {
     if (b?.fields) return { fields: b.fields }
     return { message: b?.error ?? `submit failed (${res.status})` }
   },
+  // Contents of an `as: markdown_file` present entry: { path, markdown } or null.
+  async presentFile(id, key) {
+    const res = await fetch(api(`/marbles/${id}/present-file?key=${encodeURIComponent(key)}`), { cache: "no-store" })
+    return res.ok ? jsonOrNull(res) : null
+  },
   // Live-output delta for a node: { lines, nextSeq } since the given cursor.
   async nodeLogs(nodeId, since) {
     const res = await fetch(api(`/nodes/${encodeURIComponent(nodeId)}/logs?since=${since}`), { cache: "no-store" })
