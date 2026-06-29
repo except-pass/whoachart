@@ -95,6 +95,24 @@ test("a supervisor session that spawns AFTER the chart is deleted is torn down, 
   expect(stopped).toContain("wc-sup-oversee") // late session torn down, not leaked
 })
 
+test("supervisor recovers when a stale same-name session already holds the name (daemon restart)", async () => {
+  clearRegistry(); registerBuiltins()
+  const root = await mkdtemp(join(tmpdir(), "wc-restart-"))
+  const chartsDir = join(root, "charts"); await mkdir(chartsDir, { recursive: true })
+  await writeFile(join(chartsDir, "oversee.yaml"), SUP_CHART)
+  const l = new FakeLauncher()
+  // Simulate a prior daemon's supervisor session left behind in Tinstar: the
+  // create-only spawn 409s on this name until it's deleted.
+  l.occupied.add("wc-sup-oversee")
+  const d = new Daemon({ chartsDir, storeDir: join(root, "store"), client: new FakeCanvas(), launcher: l })
+  await d.start()
+  // The first spawn 409s; the daemon clears the stale session and the respawn lands.
+  const sup = await waitFor(async () => l.spawned.find((s) => s.name === "wc-sup-oversee") ?? null)
+  expect(sup.name).toBe("wc-sup-oversee")
+  expect(l.deleted).toContain("wc-sup-oversee") // stale session was cleared, not retried-forever
+  expect(l.spawned.filter((s) => s.name === "wc-sup-oversee")).toHaveLength(1)
+})
+
 test("a chart without a supervisor block spawns no supervisor", async () => {
   clearRegistry(); registerBuiltins()
   const root = await mkdtemp(join(tmpdir(), "wc-nosup-"))

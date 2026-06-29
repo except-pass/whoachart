@@ -44,10 +44,24 @@ export interface SpawnSessionOpts {
   focus?: boolean
 }
 
+// Thrown by spawnSession on a non-OK response. Carries the HTTP status so
+// callers can branch — notably a 409 (name already taken) needs different
+// handling (clear the stale session and respawn) than a transient failure.
+export class SpawnSessionError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message)
+    this.name = "SpawnSessionError"
+  }
+}
+
 // Minimal surface for spawning/stopping agent sessions — injectable for tests.
 export interface SessionLauncher {
   spawnSession(opts: SpawnSessionOpts): Promise<{ name: string }>
   stopSession(name: string): Promise<void>
+  // Permanently remove a session record by name (DELETE, not stop). A stopped
+  // session still holds its name and 409s a same-name create, so respawning a
+  // supervisor after a daemon restart needs this to clear the stale record.
+  deleteSession(name: string): Promise<void>
 }
 
 export interface EnsureWidgetOpts {
@@ -125,7 +139,7 @@ export class TinstarClient implements ArtifactSink, SessionLauncher, CanvasContr
     })
     const body = (await res.json().catch(() => ({}))) as any
     if (!res.ok || body?.ok === false) {
-      throw new Error(`spawnSession failed: ${res.status} ${JSON.stringify(body)}`)
+      throw new SpawnSessionError(`spawnSession failed: ${res.status} ${JSON.stringify(body)}`, res.status)
     }
     return { name }
   }
@@ -133,6 +147,15 @@ export class TinstarClient implements ArtifactSink, SessionLauncher, CanvasContr
   async stopSession(name: string): Promise<void> {
     await fetch(`${this.baseUrl}/api/sessions/${encodeURIComponent(name)}/stop`, {
       method: "POST",
+    }).catch(() => {})
+  }
+
+  async deleteSession(name: string): Promise<void> {
+    // Best-effort, mirroring stopSession: a 404 (already gone) or unreachable
+    // Tinstar must not throw. The name is the same one passed to spawnSession,
+    // already sanitized to [a-z0-9-], so encodeURIComponent is just belt-and-braces.
+    await fetch(`${this.baseUrl}/api/sessions/${encodeURIComponent(name)}`, {
+      method: "DELETE",
     }).catch(() => {})
   }
 

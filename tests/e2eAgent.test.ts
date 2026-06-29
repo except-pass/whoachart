@@ -27,6 +27,7 @@ class AutoAgent implements SessionLauncher {
     return { name: o.name }
   }
   async stopSession(n: string) { this.stopped.push(n) }
+  async deleteSession(_n: string) {}
 }
 
 beforeEach(() => clearRegistry())
