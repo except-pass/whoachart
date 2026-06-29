@@ -48,14 +48,19 @@ export function nextRun(expr: string, after: Date): Date {
   const d = new Date(after.getTime())
   d.setSeconds(0, 0)
   d.setMinutes(d.getMinutes() + 1) // strictly after the current minute
-  for (let i = 0; i < 366 * 24 * 60; i++) {
+  // Search ~5 years of minutes: long enough that a legitimate-but-sparse cron
+  // (e.g. Feb 29, which recurs only every 4 years) resolves rather than being
+  // wrongly treated as "never". A genuinely impossible expression (e.g. Feb 30)
+  // still exhausts the horizon and throws — the Scheduler catches that.
+  const HORIZON_MIN = 5 * 366 * 24 * 60
+  for (let i = 0; i < HORIZON_MIN; i++) {
     if (
       months.has(d.getMonth() + 1) && doms.has(d.getDate()) && dows.has(d.getDay()) &&
       hours.has(d.getHours()) && mins.has(d.getMinutes())
     ) return d
     d.setMinutes(d.getMinutes() + 1)
   }
-  throw new Error(`no cron match within a year for "${expr}"`)
+  throw new Error(`no cron match within the search horizon for "${expr}"`)
 }
 
 // Interval form: <n>s|m|h -> milliseconds. Positive only.

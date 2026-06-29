@@ -4,6 +4,7 @@ import { parse as parseYaml } from "yaml"
 import type { Chart } from "./types"
 import { getNodeType } from "./registry"
 import { formFieldSchema } from "./forms"
+import { parseCron, everyToMs } from "./cron"
 
 const edgeSchema = z.object({
   from: z.string(),
@@ -88,6 +89,12 @@ export function parseChart(yamlText: string): Chart {
   const hookIds = new Set<string>()
   for (const t of chart.triggers ?? []) {
     if (!sourceIds.has(t.start)) throw new Error(`trigger start must name a source node: ${t.start}`)
+    // Validate the schedule expression NOW, so a bad cron/every is rejected at
+    // parse time (before any disk write or runtime swap) rather than throwing
+    // late inside Scheduler.arm() — which would half-install a runtime or leave
+    // two engines on one marble store on the update path.
+    if (t.cron !== undefined) parseCron(t.cron)
+    if (t.every !== undefined) everyToMs(t.every)
     if (t.webhook) {
       if (hookIds.has(t.webhook)) throw new Error(`duplicate webhook id: ${t.webhook}`)
       hookIds.add(t.webhook)

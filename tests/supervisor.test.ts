@@ -62,6 +62,38 @@ test("deleting the chart stops the supervisor session", async () => {
   expect(launcher.stopped).toContain(sup.name)
 })
 
+test("a hot-reload leaves the running supervisor untouched (v1: not stopped, not re-spawned)", async () => {
+  await boot()
+  const sup = await waitFor(async () => launcher.spawned.find((s) => s.name === "wc-sup-oversee") ?? null)
+  await daemon.updateChart("oversee", SUP_CHART.replace('brief: "Resolve routing gates; leave approvals to a human."', 'brief: "edited"'))
+  expect(launcher.stopped).not.toContain(sup.name)
+  expect(launcher.spawned.filter((s) => s.name === "wc-sup-oversee")).toHaveLength(1) // not re-spawned
+})
+
+test("a supervisor session that spawns AFTER the chart is deleted is torn down, not leaked", async () => {
+  clearRegistry(); registerBuiltins()
+  const root = await mkdtemp(join(tmpdir(), "wc-late-"))
+  const chartsDir = join(root, "charts"); await mkdir(chartsDir, { recursive: true })
+  await writeFile(join(chartsDir, "oversee.yaml"), SUP_CHART)
+  // Launcher whose spawnSession resolves only when we release it, so we can
+  // delete the chart while the spawn is still in flight.
+  let release!: () => void
+  const gate = new Promise<void>((r) => { release = r })
+  const stopped: string[] = []
+  const launch = {
+    spawned: [] as string[],
+    async spawnSession(o: { name: string }) { this.spawned.push(o.name); await gate; return { name: o.name } },
+    async stopSession(n: string) { stopped.push(n) },
+  }
+  const d = new Daemon({ chartsDir, storeDir: join(root, "store"), client: new FakeCanvas(), launcher: launch as any })
+  await d.start()
+  await waitFor(async () => (launch.spawned.length ? true : null)) // spawn in flight, gated
+  await d.deleteChart("oversee", { force: true }) // delete BEFORE the spawn resolves
+  release()
+  await waitFor(async () => (stopped.includes("wc-sup-oversee") ? true : null))
+  expect(stopped).toContain("wc-sup-oversee") // late session torn down, not leaked
+})
+
 test("a chart without a supervisor block spawns no supervisor", async () => {
   clearRegistry(); registerBuiltins()
   const root = await mkdtemp(join(tmpdir(), "wc-nosup-"))

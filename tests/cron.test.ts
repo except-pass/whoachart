@@ -44,3 +44,35 @@ test("everyToMs rejects bad forms", () => {
   expect(() => everyToMs("15")).toThrow(/expected/)
   expect(() => everyToMs("0m")).toThrow(/positive/)
 })
+
+test("nextRun ANDs day-of-month and day-of-week when both are restricted", () => {
+  // 9am on the 15th AND a Monday — the result must satisfy both.
+  const next = nextRun("0 9 15 * 1", new Date(2026, 0, 1))
+  expect(next.getDate()).toBe(15)
+  expect(next.getDay()).toBe(1)
+  expect(next.getHours()).toBe(9)
+})
+
+test("nextRun handles list fields (0 9,17 * * *)", () => {
+  const next = nextRun("0 9,17 * * *", new Date(2026, 5, 29, 10, 0, 0)) // after 9, before 17
+  expect(next.getHours()).toBe(17)
+  expect(next.getDate()).toBe(29)
+})
+
+test("parseCron expands a list field into the full set", () => {
+  const hours = parseCron("0 9,17 * * 1-5")[1]
+  expect(hours.has(9)).toBe(true)
+  expect(hours.has(17)).toBe(true)
+  expect(hours.has(12)).toBe(false)
+})
+
+test("nextRun resolves a sparse-but-real cron (Feb 29) within the horizon", () => {
+  const next = nextRun("0 0 29 2 *", new Date(2026, 0, 1)) // next Feb 29 is 2028
+  expect(next.getMonth()).toBe(1) // February
+  expect(next.getDate()).toBe(29)
+  expect(next.getFullYear()).toBe(2028)
+})
+
+test("nextRun throws for an impossible expression (Feb 30 never occurs)", () => {
+  expect(() => nextRun("0 0 30 2 *", new Date(2026, 0, 1))).toThrow(/no cron match/)
+})

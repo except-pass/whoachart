@@ -63,9 +63,27 @@ export class Scheduler {
     let cancelTimer: () => void = () => {}
     const tick = (): void => {
       if (cancelled) return
-      cancelTimer = this.clock.setTimer(delayMs(), () => {
+      // delayMs() can throw for a cron with no occurrence in the search horizon
+      // (e.g. "0 0 30 2 *"). It runs inside a timer callback, so an uncaught
+      // throw would crash the daemon — route it to onError and stop THIS
+      // trigger's schedule gracefully instead.
+      let ms: number
+      try {
+        ms = delayMs()
+      } catch (err) {
+        this.onError?.(chart, err)
+        return
+      }
+      cancelTimer = this.clock.setTimer(ms, () => {
         if (cancelled) return
-        Promise.resolve(fire(t)).catch((err) => this.onError?.(chart, err))
+        // Route BOTH a synchronous throw and a rejected promise from fire() to
+        // onError (a sync throw escapes the .catch since it happens before
+        // Promise.resolve attaches), and always tick() so the schedule survives.
+        try {
+          Promise.resolve(fire(t)).catch((err) => this.onError?.(chart, err))
+        } catch (err) {
+          this.onError?.(chart, err)
+        }
         tick()
       })
     }

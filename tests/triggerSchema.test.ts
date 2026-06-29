@@ -52,6 +52,14 @@ test("rejects duplicate webhook ids", () => {
   expect(() => parseChart(base(`  - { webhook: ping, start: scan }\n  - { webhook: ping, start: scan }`))).toThrow(/duplicate webhook/)
 })
 
+test("rejects an invalid cron expression at parse time", () => {
+  expect(() => parseChart(base(`  - { cron: "99 9 * * *", start: scan }`))).toThrow(/out of range|cron/)
+})
+
+test("rejects an invalid every interval at parse time", () => {
+  expect(() => parseChart(base(`  - { every: "15", start: scan }`))).toThrow(/interval|expected/)
+})
+
 test("parses a supervisor block and node decider", () => {
   const c = parseChart(`
 name: trig
@@ -99,4 +107,27 @@ edges:
   await d.start()
   const node = d.def("trig").nodes.find((n) => n.id === "gate")
   expect(node?.decider).toBe("agent")
+})
+
+test("def() surfaces a chart's triggers", async () => {
+  const root = await mkdtemp(join(tmpdir(), "wc-deft-"))
+  const chartsDir = join(root, "charts"); await mkdir(chartsDir, { recursive: true })
+  await writeFile(join(chartsDir, "trig.yaml"), `
+name: trig
+triggers:
+  - { every: 30m, start: scan }
+  - { webhook: poke, start: scan }
+nodes:
+  - id: scan
+    type: source
+    config: { trigger: api }
+  - id: done
+    type: end
+    config: { outcome: success }
+edges:
+  - { from: scan, to: done }
+`)
+  const d = new Daemon({ chartsDir, storeDir: join(root, "store"), client: new FakeCanvas() })
+  await d.start()
+  expect(d.def("trig").triggers).toEqual([{ every: "30m", start: "scan" }, { webhook: "poke", start: "scan" }])
 })

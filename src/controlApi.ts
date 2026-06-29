@@ -98,17 +98,24 @@ export function createControlApi(daemon: Daemon, port: number, opts: ControlApiO
         }
 
         // POST /api/charts — register a chart. A JSON `{path}` body registers
-        // BY REFERENCE (symlink to a file anywhere on disk); any other body is
+        // BY REFERENCE (symlink to a file anywhere on disk); ANY other body is
         // raw YAML registered BY VALUE (copied into the store). Both loopback-only.
+        // The body is read ONCE as text; register-by-reference is taken only when
+        // it parses as a JSON object carrying a string `path`. Everything else —
+        // non-JSON, unparseable, or JSON without `path` — falls through to
+        // register-by-value, so a YAML chart sent with an `application/json`
+        // header (or a JSON-formatted chart) still registers as before.
         if (req.method === "POST" && url.pathname === "/api/charts") {
           const blocked = writeGate(addr)
           if (blocked) return blocked
+          const raw = await req.text()
           if ((req.headers.get("content-type") ?? "").includes("application/json")) {
-            const body = (await req.json().catch(() => ({}))) as { path?: unknown }
-            if (typeof body.path === "string") return json(await daemon.registerChartByPath(body.path), 201)
-            return json({ error: "expected { path } for a JSON register" }, 400)
+            let parsed: unknown
+            try { parsed = JSON.parse(raw) } catch { parsed = undefined }
+            const path = (parsed as { path?: unknown } | undefined)?.path
+            if (typeof path === "string") return json(await daemon.registerChartByPath(path), 201)
           }
-          return json(await daemon.registerChart(await req.text()), 201)
+          return json(await daemon.registerChart(raw), 201)
         }
 
         // POST /api/charts/reload — rescan the store dir and bring live any

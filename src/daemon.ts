@@ -17,7 +17,7 @@ import { Scheduler, realClock, type Clock } from "./scheduler"
 import { buildSupervisorBrief } from "./supervisor"
 import { validateForm } from "./forms"
 import type { CanvasControl, SessionLauncher, SpawnSessionOpts } from "./tinstar"
-import type { Chart, ChartNode, FormField, Marble, PresentSpec } from "./types"
+import type { Chart, ChartNode, ChartTrigger, FormField, Marble, PresentSpec } from "./types"
 
 // One timestamped line per lifecycle event — the operator audit trail.
 function logLine(chart: string, msg: string): void {
@@ -142,6 +142,9 @@ export interface ChartDef {
   }[]
   edges: { from: string; to: string; name?: string; default?: boolean; form?: FormField[] }[]
   layout: { boxes: Record<string, NodeBox>; width: number; height: number }
+  // How the chart is driven (cron/interval/webhook). Surfaced so the UI and a
+  // supervisor agent can see a chart's triggers, not just its topology.
+  triggers?: ChartTrigger[]
   // Advisory static-analysis findings for the live chart, computed at request
   // time so a hot-reload (3a) re-lints. Separate top-level key — NOT folded into
   // nodes/edges — so the canvas (2b) and other /def consumers are undisturbed.
@@ -246,6 +249,7 @@ export class Daemon {
         logLine("daemon", `confining widgets to space "${this.opts.space}" (${this.spaceId})`)
         const teardownAndExit = (sig: string): void => {
           logLine("daemon", `${sig} — removing ${this.createdWidgets.length} widget(s) from space`)
+          for (const name of [...this.supervisors.keys()]) this.stopSupervisor(name)
           void this.teardownWidgets().finally(() => process.exit(0))
         }
         process.once("SIGTERM", () => teardownAndExit("SIGTERM"))
@@ -344,12 +348,26 @@ export class Daemon {
       if (!this.runtimes.has(chart.name) || this.supervisors.has(chart.name)) return
       this.launcher!.spawnSession({
         name: sessionName,
-        prompt: buildSupervisorBrief(chart, this.baseUrl),
+        // publicUrl (not baseUrl): the brief embeds control-API curl commands the
+        // spawned session must actually reach; baseUrl is always loopback, while
+        // publicUrl honors WHOACHART_PUBLIC_URL for remote/tailnet deployments
+        // (same reason ensureWidgetLoop uses publicUrl).
+        prompt: buildSupervisorBrief(chart, this.publicUrl),
         project: sup.project,
         cliTemplate: sup.cli_template,
         spaceId: this.agentSpaceId,
       }).then(
-        () => { this.supervisors.set(chart.name, sessionName); logLine(chart.name, `supervisor spawned name=${sessionName}`) },
+        () => {
+          // The chart may have been deleted while spawn was in flight; its
+          // stopSupervisor ran before this session existed. Tear down the
+          // late-landing session instead of leaking it.
+          if (!this.runtimes.has(chart.name)) {
+            void this.launcher!.stopSession(sessionName).catch(() => {})
+            logLine(chart.name, `supervisor spawned after delete — stopping orphan ${sessionName}`)
+            return
+          }
+          this.supervisors.set(chart.name, sessionName); logLine(chart.name, `supervisor spawned name=${sessionName}`)
+        },
         (err) => {
           logLine(chart.name, `supervisor spawn failed (${String(err).split("\n")[0]}); retrying in ${retryMs / 1000}s`)
           const t = setTimeout(attempt, retryMs)
@@ -687,6 +705,7 @@ export class Daemon {
       })),
       edges: rt.chart.edges.map((e) => ({ from: e.from, to: e.to, name: e.name, default: e.default, form: e.form })),
       layout: { boxes, width: rt.layout.width, height: rt.layout.height },
+      triggers: rt.chart.triggers,
       // Re-linted per request: the live chart may have been hot-reloaded since boot.
       lint: lintChart(rt.chart).warnings,
     }

@@ -1,7 +1,7 @@
 import { test, expect, beforeEach, afterEach } from "bun:test"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { mkdtemp, writeFile, mkdir, readFile, lstat } from "node:fs/promises"
+import { mkdtemp, writeFile, mkdir, readFile, lstat, unlink } from "node:fs/promises"
 import { Daemon } from "../src/daemon"
 import { createControlApi } from "../src/controlApi"
 import { clearRegistry } from "../src/registry"
@@ -70,6 +70,37 @@ test("PUT on a referenced chart writes through to the real file, not the symlink
   expect(put.status).toBe(200)
   expect(await readFile(externalPath, "utf8")).toContain("Edited intake")
   expect((await lstat(join(chartsDir, "faraway.yaml"))).isSymbolicLink()).toBe(true)
+})
+
+test("raw YAML with an application/json header still registers by value (backward-compat)", async () => {
+  // A client sending raw YAML but defaulting to an application/json header must
+  // not regress to a 400 — it falls through to register-by-value.
+  const res = await fetch(`${base}/api/charts`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: EXTERNAL,
+  })
+  expect(res.status).toBe(201)
+  expect(daemon.charts()).toContain("faraway")
+  // and it's a copy, not a symlink (register-by-value)
+  expect((await lstat(join(chartsDir, "faraway.yaml"))).isSymbolicLink()).toBe(false)
+})
+
+test("a dangling reference symlink is skipped into bootErrors, not a crash", async () => {
+  await fetch(`${base}/api/charts`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: externalPath }),
+  })
+  await unlink(externalPath) // target gone -> store symlink now dangles
+  clearRegistry(); registerBuiltins()
+  const d2 = new Daemon({ chartsDir, storeDir, client: new FakeCanvas() })
+  await d2.start()
+  expect(d2.charts()).not.toContain("faraway")
+  expect(d2.bootErrors.some((e) => e.name === "faraway")).toBe(true)
+})
+
+test("registering a chart with an invalid cron is rejected 400 (validated at parse)", async () => {
+  const bad = EXTERNAL.replace("name: faraway", "name: faraway\ntriggers:\n  - { cron: \"99 9 * * *\", start: ingest }")
+  const res = await fetch(`${base}/api/charts`, { method: "POST", body: bad })
+  expect(res.status).toBe(400)
+  expect(daemon.charts()).not.toContain("faraway")
 })
 
 test("register {path} is loopback-only", async () => {

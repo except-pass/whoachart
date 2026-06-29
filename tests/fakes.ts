@@ -42,6 +42,11 @@ export class FakeLauncher implements SessionLauncher {
   }
 }
 
+// Deterministic clock for scheduler tests. NOTE: advance(N*period) fires each
+// periodic timer AT MOST ONCE — due timers are snapshotted before any callback
+// re-arms, so a timer rescheduled during the advance lands past the new `t` and
+// waits for a further advance. To simulate k firings, call advance(period) k
+// times, not advance(k*period).
 export class FakeClock implements Clock {
   private t = 0
   private seq = 0
