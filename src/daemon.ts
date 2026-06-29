@@ -115,6 +115,7 @@ export interface ChartDef {
     id: string
     type: string
     name?: string
+    decider?: "human" | "agent"
     // Human-readable docs (markdown) + external runbook link. Surfaced to
     // operators (drawer/hover) and to agents reading /def for procedure routing.
     description?: string
@@ -571,6 +572,7 @@ export class Daemon {
         id: n.id,
         type: n.type,
         name: n.name,
+        decider: n.decider,
         // Docs are intentionally NOT run through redactSecrets — they're
         // human-authored prose, not config values that might carry credentials.
         description: n.description,
