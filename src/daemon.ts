@@ -356,6 +356,7 @@ export class Daemon {
         project: sup.project,
         cliTemplate: sup.cli_template,
         spaceId: this.agentSpaceId,
+        focus: false, // a background overseer must not yank the user's viewport
       }).then(
         () => {
           // The chart may have been deleted while spawn was in flight; its
