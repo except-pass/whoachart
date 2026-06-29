@@ -6,8 +6,10 @@ import type { RunCtx, Marble, ChartNode } from "../src/types"
 class FakeLauncher implements SessionLauncher {
   spawned: SpawnSessionOpts[] = []
   stopped: string[] = []
+  deleted: string[] = []
   async spawnSession(opts: SpawnSessionOpts) { this.spawned.push(opts); return { name: opts.name } }
   async stopSession(name: string) { this.stopped.push(name) }
+  async deleteSession(name: string) { this.deleted.push(name) }
 }
 
 const node: ChartNode = {

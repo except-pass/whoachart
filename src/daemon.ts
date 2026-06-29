@@ -17,6 +17,7 @@ import { Scheduler, realClock, type Clock } from "./scheduler"
 import { buildSupervisorBrief } from "./supervisor"
 import { validateForm } from "./forms"
 import type { CanvasControl, SessionLauncher, SpawnSessionOpts } from "./tinstar"
+import { SpawnSessionError } from "./tinstar"
 import type { Chart, ChartNode, ChartTrigger, FormField, Marble, PresentSpec } from "./types"
 
 // One timestamped line per lifecycle event — the operator audit trail.
@@ -52,6 +53,10 @@ function loggingLauncher(inner: SessionLauncher): SessionLauncher {
     async stopSession(name: string) {
       logLine("-", `session stopping name=${name}`)
       await inner.stopSession(name)
+    },
+    async deleteSession(name: string) {
+      logLine("-", `session deleting name=${name}`)
+      await inner.deleteSession(name)
     },
   }
 }
@@ -230,6 +235,7 @@ export class Daemon {
     const launcher: SessionLauncher = this.launcher ?? {
       spawnSession: async () => { throw new Error("no session launcher configured (agent nodes need one)") },
       stopSession: async () => {},
+      deleteSession: async () => {},
     }
     this.nodeTypes = new Map<string, NodeType>([
       ["agent", makeAgentNode(launcher, (m) => `${this.baseUrl}/api/charts/${m.chart}/marbles/${m.id}/signal`)],
@@ -342,6 +348,10 @@ export class Daemon {
     if (this.supervisors.has(chart.name)) return
     const sessionName = `wc-sup-${chart.name}`.toLowerCase().replace(/[^a-z0-9-]/g, "-")
     const sup = chart.supervisor
+    // Guards a one-shot recovery: on the first 409 (name already taken) we clear
+    // the stale session and respawn immediately. If a subsequent attempt still
+    // conflicts, we fall back to the timer instead of a delete↔spawn hot loop.
+    let staleCleared = false
     const attempt = (): void => {
       // Bail if the chart was deleted/replaced while a retry was pending, or a
       // prior attempt already landed the session.
@@ -370,6 +380,26 @@ export class Daemon {
           this.supervisors.set(chart.name, sessionName); logLine(chart.name, `supervisor spawned name=${sessionName}`)
         },
         (err) => {
+          // A 409 means a prior supervisor session for this chart — gone stale
+          // after a daemon restart but still holding the name in Tinstar — blocks
+          // the create-only spawn. Without intervention this 409s on every retry
+          // and the supervisor never comes back. Clear the stale record once (the
+          // documented DELETE /api/sessions/<name> workaround) and respawn at once.
+          // Other failures (Tinstar down) are transient, so just retry on the timer.
+          const conflict = err instanceof SpawnSessionError && err.status === 409
+          if (conflict && !staleCleared) {
+            staleCleared = true
+            logLine(chart.name, `supervisor name ${sessionName} held by a stale session — clearing and respawning`)
+            this.launcher!.deleteSession(sessionName).then(
+              () => attempt(),
+              (delErr) => {
+                logLine(chart.name, `supervisor stale-session clear failed (${String(delErr).split("\n")[0]}); retrying in ${retryMs / 1000}s`)
+                const t = setTimeout(attempt, retryMs)
+                ;(t as unknown as { unref?: () => void }).unref?.()
+              },
+            )
+            return
+          }
           logLine(chart.name, `supervisor spawn failed (${String(err).split("\n")[0]}); retrying in ${retryMs / 1000}s`)
           const t = setTimeout(attempt, retryMs)
           ;(t as unknown as { unref?: () => void }).unref?.()

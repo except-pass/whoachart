@@ -1,4 +1,5 @@
 import type { CanvasControl, EnsureWidgetOpts, SessionLauncher, SpawnSessionOpts } from "../src/tinstar"
+import { SpawnSessionError } from "../src/tinstar"
 import type { Clock } from "../src/scheduler"
 
 export class FakeCanvas implements CanvasControl {
@@ -33,12 +34,24 @@ export class FakeCanvas implements CanvasControl {
 export class FakeLauncher implements SessionLauncher {
   spawned: SpawnSessionOpts[] = []
   stopped: string[] = []
+  deleted: string[] = []
+  // Names a prior (stale) session already holds: spawnSession 409s on these until
+  // deleteSession clears them. Empty by default, so existing tests are unaffected;
+  // seed it to simulate a daemon restart leaving a stopped session behind.
+  occupied = new Set<string>()
   async spawnSession(o: SpawnSessionOpts) {
+    if (this.occupied.has(o.name)) {
+      throw new SpawnSessionError(`spawnSession failed: 409 {"ok":false,"error":{"code":"CONFLICT"}}`, 409)
+    }
     this.spawned.push(o)
     return { name: o.name }
   }
   async stopSession(n: string) {
     this.stopped.push(n)
+  }
+  async deleteSession(n: string) {
+    this.deleted.push(n)
+    this.occupied.delete(n)
   }
 }
 
