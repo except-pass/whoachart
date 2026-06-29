@@ -53,6 +53,7 @@ test("a chart with a supervisor block spawns one session, briefed on its agent g
   expect(sup.prompt).toContain("route")
   expect(sup.project).toBe("whoachart")
   expect(sup.spaceId).toBe("sp-fake")
+  expect(sup.focus).toBe(false) // spawns passively — no viewport pull
 })
 
 test("deleting the chart stops the supervisor session", async () => {

@@ -65,6 +65,10 @@ export function makeAgentNode(
         color: ctx.node.color,
         project: cfg.project,
         cliTemplate: cfg.cli_template,
+        // Spawn passively — whoachart's per-step agents shouldn't pull the user's
+        // viewport; they can be focused on demand via focus-session. (Ignored by
+        // Tinstar until it honors `focus`; harmless before then.)
+        focus: false,
       })
       // _session is reserved in context: the live session working this marble.
       return { block: true, merge: { _session: sessionName } }

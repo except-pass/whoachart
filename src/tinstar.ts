@@ -36,6 +36,12 @@ export interface SpawnSessionOpts {
   // create body; Tinstar honors it where supported, else the session lands in the
   // active space (best-effort, same degradation as widget placement).
   spaceId?: string
+  // When false, ask Tinstar to spawn the session WITHOUT pulling the canvas
+  // viewport to it — so whoachart's background sessions (supervisor, per-step
+  // agents) don't yank the user's focus. Forwarded in the create body; Tinstar
+  // honors it where supported (default there is focus:true = today's behavior),
+  // else it's an ignored field and the session focuses as before.
+  focus?: boolean
 }
 
 // Minimal surface for spawning/stopping agent sessions — injectable for tests.
