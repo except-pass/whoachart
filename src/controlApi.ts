@@ -45,6 +45,7 @@ export interface ControlApiOpts {
 //   GET  /api/charts/:name/def            (chart topology + layout)
 //   GET  /api/charts/:name/state          (bounded live view aggregate; polled by the canvas page)
 //   GET  /api/charts/:name/nodes/:id/logs (live-output delta: ?since=<seq>&marble=<id>)
+//   POST /api/hooks/:chart/:hook          (tailnet-internal inbound trigger)
 //   POST /api/charts/:name/marbles        { context?, workpiece?, start? }
 //   GET  /api/charts/:name/marbles
 //   GET  /api/charts/:name/marbles/:id
@@ -96,11 +97,25 @@ export function createControlApi(daemon: Daemon, port: number, opts: ControlApiO
           return json({ charts: daemon.charts() })
         }
 
-        // POST /api/charts — register a new chart from a raw YAML request body.
+        // POST /api/charts — register a chart. A JSON `{path}` body registers
+        // BY REFERENCE (symlink to a file anywhere on disk); ANY other body is
+        // raw YAML registered BY VALUE (copied into the store). Both loopback-only.
+        // The body is read ONCE as text; register-by-reference is taken only when
+        // it parses as a JSON object carrying a string `path`. Everything else —
+        // non-JSON, unparseable, or JSON without `path` — falls through to
+        // register-by-value, so a YAML chart sent with an `application/json`
+        // header (or a JSON-formatted chart) still registers as before.
         if (req.method === "POST" && url.pathname === "/api/charts") {
           const blocked = writeGate(addr)
           if (blocked) return blocked
-          return json(await daemon.registerChart(await req.text()), 201)
+          const raw = await req.text()
+          if ((req.headers.get("content-type") ?? "").includes("application/json")) {
+            let parsed: unknown
+            try { parsed = JSON.parse(raw) } catch { parsed = undefined }
+            const path = (parsed as { path?: unknown } | undefined)?.path
+            if (typeof path === "string") return json(await daemon.registerChartByPath(path), 201)
+          }
+          return json(await daemon.registerChart(raw), 201)
         }
 
         // POST /api/charts/reload — rescan the store dir and bring live any
@@ -109,6 +124,16 @@ export function createControlApi(daemon: Daemon, port: number, opts: ControlApiO
           const blocked = writeGate(addr)
           if (blocked) return blocked
           return json(await daemon.loadNewCharts())
+        }
+
+        // POST /api/hooks/:chart/:hook — tailnet-internal inbound trigger. Behind
+        // the base trust gate (loopback + tailnet), NOT writeGate: it fires a run,
+        // it does not install code. Body JSON -> marble context (form-validated).
+        if (req.method === "POST" && p[0] === "api" && p[1] === "hooks" && p[2] && p[3] && !p[4]) {
+          const parsed = await req.json().catch(() => ({}))
+          const body = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {}
+          const m = await daemon.fireWebhook(p[2], p[3], body)
+          return json({ id: m.id, status: m.status }, 202)
         }
 
         if (p[0] === "api" && p[1] === "charts" && p[2] && p[3] === "def" && req.method === "GET") {

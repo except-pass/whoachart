@@ -1,0 +1,44 @@
+# examples/automation-demo.yaml
+#
+# Demonstrates the automation surface: a cron schedule, an interval, a webhook,
+# a supervisor session, and an agent-decided routing gate.
+#
+#   Cron:     fires the scan weekday mornings.
+#   Interval: a lightweight heartbeat every 30m.
+#   Webhook:  POST /api/hooks/automation-demo/poke  (tailnet-internal).
+#   Supervisor: one session oversees runs and resolves the `route` gate
+#               (decider: agent); the `approve` gate stays human.
+name: automation-demo
+triggers:
+  - { cron: "0 9 * * 1-5", start: scan, context: { reason: "morning" } }
+  - { every: 30m, start: scan, context: { reason: "heartbeat" } }
+  - { webhook: poke, start: scan }
+supervisor:
+  brief: |
+    Oversee this chart. Resolve the `route` gate by choosing the edge that
+    matches the marble's context. Leave `approve` to a human.
+  project: whoachart
+nodes:
+  - id: scan
+    type: source
+    config:
+      trigger: api
+      form:
+        - { key: reason, type: text }
+  - id: route
+    type: human
+    name: Route (agent-decided)
+    decider: agent
+    config: {}
+  - id: approve
+    type: human
+    name: Approve (human-only)
+    config: {}
+  - id: done
+    type: end
+    config: { outcome: success }
+edges:
+  - { from: scan, to: route }
+  - { from: route, to: approve, name: escalate }
+  - { from: route, to: done, name: ignore }
+  - { from: approve, to: done, name: ok }

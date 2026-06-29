@@ -1,0 +1,78 @@
+import { test, expect } from "bun:test"
+import { nextRun, everyToMs, parseCron } from "../src/cron"
+
+test("nextRun advances to the next matching minute (weekday 9am)", () => {
+  // Sun 2026-06-28 10:00 local -> next weekday 09:00 is Mon 2026-06-29 09:00
+  const after = new Date(2026, 5, 28, 10, 0, 0)
+  const next = nextRun("0 9 * * 1-5", after)
+  expect(next.getFullYear()).toBe(2026)
+  expect(next.getMonth()).toBe(5)
+  expect(next.getDate()).toBe(29)
+  expect(next.getHours()).toBe(9)
+  expect(next.getMinutes()).toBe(0)
+  expect(next.getDay()).toBe(1) // Monday
+})
+
+test("nextRun is strictly after — an exact match rolls to the next occurrence", () => {
+  const at = new Date(2026, 5, 29, 9, 0, 0) // exactly Mon 09:00
+  const next = nextRun("0 9 * * 1-5", at)
+  expect(next.getDate()).toBe(30) // Tue 09:00, not the same instant
+})
+
+test("nextRun handles step fields (every 15 min)", () => {
+  const after = new Date(2026, 5, 29, 9, 7, 0)
+  const next = nextRun("*/15 * * * *", after)
+  expect(next.getMinutes()).toBe(15)
+  expect(next.getHours()).toBe(9)
+})
+
+test("parseCron rejects a wrong field count", () => {
+  expect(() => parseCron("* * * *")).toThrow(/5 fields/)
+})
+
+test("parseCron rejects out-of-range values", () => {
+  expect(() => parseCron("99 * * * *")).toThrow(/out of range/)
+})
+
+test("everyToMs parses s/m/h", () => {
+  expect(everyToMs("30s")).toBe(30_000)
+  expect(everyToMs("15m")).toBe(900_000)
+  expect(everyToMs("2h")).toBe(7_200_000)
+})
+
+test("everyToMs rejects bad forms", () => {
+  expect(() => everyToMs("15")).toThrow(/expected/)
+  expect(() => everyToMs("0m")).toThrow(/positive/)
+})
+
+test("nextRun ANDs day-of-month and day-of-week when both are restricted", () => {
+  // 9am on the 15th AND a Monday — the result must satisfy both.
+  const next = nextRun("0 9 15 * 1", new Date(2026, 0, 1))
+  expect(next.getDate()).toBe(15)
+  expect(next.getDay()).toBe(1)
+  expect(next.getHours()).toBe(9)
+})
+
+test("nextRun handles list fields (0 9,17 * * *)", () => {
+  const next = nextRun("0 9,17 * * *", new Date(2026, 5, 29, 10, 0, 0)) // after 9, before 17
+  expect(next.getHours()).toBe(17)
+  expect(next.getDate()).toBe(29)
+})
+
+test("parseCron expands a list field into the full set", () => {
+  const hours = parseCron("0 9,17 * * 1-5")[1]
+  expect(hours.has(9)).toBe(true)
+  expect(hours.has(17)).toBe(true)
+  expect(hours.has(12)).toBe(false)
+})
+
+test("nextRun resolves a sparse-but-real cron (Feb 29) within the horizon", () => {
+  const next = nextRun("0 0 29 2 *", new Date(2026, 0, 1)) // next Feb 29 is 2028
+  expect(next.getMonth()).toBe(1) // February
+  expect(next.getDate()).toBe(29)
+  expect(next.getFullYear()).toBe(2028)
+})
+
+test("nextRun throws for an impossible expression (Feb 30 never occurs)", () => {
+  expect(() => nextRun("0 0 30 2 *", new Date(2026, 0, 1))).toThrow(/no cron match/)
+})

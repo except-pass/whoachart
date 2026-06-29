@@ -42,6 +42,9 @@ export interface ChartNode {
   description?: string
   doc?: string
   color?: string
+  // Who may resolve this gate. The supervisor session acts ONLY on `agent`
+  // gates; `human` (the default when unset) gates are left for a person.
+  decider?: "human" | "agent"
   on_leave?: string
   retry?: { max: number }
   timeout?: number // milliseconds
@@ -60,10 +63,27 @@ export interface ChartEdge {
   form?: FormField[]
 }
 
+export interface ChartTrigger {
+  // Exactly one of these three is set (enforced in schema.ts).
+  cron?: string          // 5-field cron, local time (e.g. "0 9 * * 1-5")
+  every?: string         // interval form (e.g. "15m"); <n>s|m|h
+  webhook?: string       // inbound hook id -> POST /api/hooks/:chart/:webhook
+  start: string          // a source node id; the marble entry point
+  context?: Record<string, unknown> // static context (cron/every); merged under a webhook body
+}
+
+export interface SupervisorSpec {
+  brief: string
+  cli_template?: string
+  project?: string
+}
+
 export interface Chart {
   name: string
   nodes: ChartNode[]
   edges: ChartEdge[]
+  triggers?: ChartTrigger[]
+  supervisor?: SupervisorSpec
 }
 
 export type MarbleStatus = "queued" | "running" | "blocked" | "done" | "failed"

@@ -1,8 +1,8 @@
 import { readFile, unlink } from "node:fs/promises"
 import { watch } from "node:fs"
-import { join, basename } from "node:path"
+import { join, basename, isAbsolute } from "node:path"
 import { parseChart } from "./schema"
-import { ChartStore, ChartError, assertSafeChartName, atomicWrite } from "./chartStore"
+import { ChartStore, ChartError, assertSafeChartName, atomicWrite, writeTarget } from "./chartStore"
 import { lintChart, type LintWarning } from "./lint"
 import { registerBuiltins } from "./nodeTypes"
 import { agentSchemaNode, makeAgentNode } from "./nodeTypes/agent"
@@ -13,9 +13,11 @@ import { ViewState, type ViewSnapshot } from "./view/viewState"
 import { LogBuffer, type LogDelta } from "./view/logBuffer"
 import { layoutChart, type Layout, type NodeBox } from "./view/layout"
 import { now, deepMerge } from "./util"
+import { Scheduler, realClock, type Clock } from "./scheduler"
+import { buildSupervisorBrief } from "./supervisor"
 import { validateForm } from "./forms"
 import type { CanvasControl, SessionLauncher, SpawnSessionOpts } from "./tinstar"
-import type { Chart, ChartNode, FormField, Marble, PresentSpec } from "./types"
+import type { Chart, ChartNode, ChartTrigger, FormField, Marble, PresentSpec } from "./types"
 
 // One timestamped line per lifecycle event — the operator audit trail.
 function logLine(chart: string, msg: string): void {
@@ -62,6 +64,12 @@ export interface DaemonOpts {
   // its charts are boot-loaded too and register/update/delete operate on it.
   chartsDir?: string
   storeDir: string
+  // Injectable clock for the trigger scheduler (FakeClock in tests). Defaults to
+  // realClock (setTimeout).
+  clock?: Clock
+  // Tinstar space NAME for supervisor sessions (WHOACHART_AGENT_SPACE) — distinct
+  // from `space` (widgets). Resolved to an id once at start; unset → active space.
+  agentSpace?: string
   // Tinstar canvas controls (widget ensure + pan). FakeCanvas in tests.
   client: CanvasControl
   concurrency?: number
@@ -115,6 +123,7 @@ export interface ChartDef {
     id: string
     type: string
     name?: string
+    decider?: "human" | "agent"
     // Human-readable docs (markdown) + external runbook link. Surfaced to
     // operators (drawer/hover) and to agents reading /def for procedure routing.
     description?: string
@@ -133,6 +142,9 @@ export interface ChartDef {
   }[]
   edges: { from: string; to: string; name?: string; default?: boolean; form?: FormField[] }[]
   layout: { boxes: Record<string, NodeBox>; width: number; height: number }
+  // How the chart is driven (cron/interval/webhook). Surfaced so the UI and a
+  // supervisor agent can see a chart's triggers, not just its topology.
+  triggers?: ChartTrigger[]
   // Advisory static-analysis findings for the live chart, computed at request
   // time so a hot-reload (3a) re-lints. Separate top-level key — NOT folded into
   // nodes/edges — so the canvas (2b) and other /def consumers are undisturbed.
@@ -178,6 +190,9 @@ export class Daemon {
   private spaceId?: string
   private createdWidgets: Array<{ chart: string; widgetId: string }> = []
   private chartStore?: ChartStore
+  private scheduler!: Scheduler
+  private supervisors = new Map<string, string>() // chart -> supervisor session name
+  private agentSpaceId?: string
   // Charts that failed to parse/install at boot. Boot SKIPS a bad chart and
   // records it here rather than crashing the whole daemon (a single malformed
   // file must not take down every other chart). Inspect after start().
@@ -204,6 +219,9 @@ export class Daemon {
   async start(): Promise<void> {
     if (!hasNodeType("end")) registerBuiltins()
     this.baseUrl = this.opts.baseUrl ?? "http://localhost:5330"
+    this.scheduler = new Scheduler(this.opts.clock ?? realClock, (chart, err) =>
+      logLine(chart, `trigger fire failed: ${errMsg(err)}`),
+    )
     this.launcher = this.opts.launcher ? loggingLauncher(this.opts.launcher) : undefined
     // Global registration is schema-only (for chart parsing/config validation);
     // the wired agent node is instance-scoped so this daemon's launcher/baseUrl
@@ -231,6 +249,7 @@ export class Daemon {
         logLine("daemon", `confining widgets to space "${this.opts.space}" (${this.spaceId})`)
         const teardownAndExit = (sig: string): void => {
           logLine("daemon", `${sig} — removing ${this.createdWidgets.length} widget(s) from space`)
+          for (const name of [...this.supervisors.keys()]) this.stopSupervisor(name)
           void this.teardownWidgets().finally(() => process.exit(0))
         }
         process.once("SIGTERM", () => teardownAndExit("SIGTERM"))
@@ -241,6 +260,12 @@ export class Daemon {
         delete process.env.WHOACHART_TINSTAR_SPACE
         logLine("daemon", `could not resolve space "${this.opts.space}" — widgets fall back to the active space`)
       }
+    }
+
+    // Resolve the supervisor-session space once (best-effort; unset/unresolvable
+    // → sessions land in Tinstar's active space).
+    if (this.opts.agentSpace) {
+      this.agentSpaceId = (await this.opts.client.ensureSpace(this.opts.agentSpace)) ?? undefined
     }
 
     // Explicit boot-load list (existing behavior). A malformed chart is skipped
@@ -304,7 +329,77 @@ export class Daemon {
     const rt = await this.buildRuntime(chart, file)
     this.runtimes.set(chart.name, rt)
     this.ensureWidgetLoop(chart)
+    this.armTriggers(chart)
+    this.ensureSupervisor(chart)
     return rt
+  }
+
+  // Keep one long-lived supervisor session per chart that has a `supervisor:`
+  // block. Tolerates Tinstar being down: logs and retries on a timer, never
+  // crashes the daemon (mirrors ensureWidgetLoop). No-op without a launcher.
+  private ensureSupervisor(chart: Chart, retryMs = 15_000): void {
+    if (!chart.supervisor || !this.launcher) return
+    if (this.supervisors.has(chart.name)) return
+    const sessionName = `wc-sup-${chart.name}`.toLowerCase().replace(/[^a-z0-9-]/g, "-")
+    const sup = chart.supervisor
+    const attempt = (): void => {
+      // Bail if the chart was deleted/replaced while a retry was pending, or a
+      // prior attempt already landed the session.
+      if (!this.runtimes.has(chart.name) || this.supervisors.has(chart.name)) return
+      this.launcher!.spawnSession({
+        name: sessionName,
+        // publicUrl (not baseUrl): the brief embeds control-API curl commands the
+        // spawned session must actually reach; baseUrl is always loopback, while
+        // publicUrl honors WHOACHART_PUBLIC_URL for remote/tailnet deployments
+        // (same reason ensureWidgetLoop uses publicUrl).
+        prompt: buildSupervisorBrief(chart, this.publicUrl),
+        project: sup.project,
+        cliTemplate: sup.cli_template,
+        spaceId: this.agentSpaceId,
+      }).then(
+        () => {
+          // The chart may have been deleted while spawn was in flight; its
+          // stopSupervisor ran before this session existed. Tear down the
+          // late-landing session instead of leaking it.
+          if (!this.runtimes.has(chart.name)) {
+            void this.launcher!.stopSession(sessionName).catch(() => {})
+            logLine(chart.name, `supervisor spawned after delete — stopping orphan ${sessionName}`)
+            return
+          }
+          this.supervisors.set(chart.name, sessionName); logLine(chart.name, `supervisor spawned name=${sessionName}`)
+        },
+        (err) => {
+          logLine(chart.name, `supervisor spawn failed (${String(err).split("\n")[0]}); retrying in ${retryMs / 1000}s`)
+          const t = setTimeout(attempt, retryMs)
+          ;(t as unknown as { unref?: () => void }).unref?.()
+        },
+      )
+    }
+    attempt()
+  }
+
+  // Stop a chart's supervisor session (delete path). Fire-and-forget; a rejecting
+  // launcher must not surface as an unhandled rejection.
+  private stopSupervisor(name: string): void {
+    const session = this.supervisors.get(name)
+    if (!session || !this.launcher) return
+    this.supervisors.delete(name)
+    void this.launcher.stopSession(session).catch((err) =>
+      logLine(name, `supervisor stop failed for ${session}: ${String(err).split("\n")[0]}`),
+    )
+  }
+
+  // (Re)arm a chart's time-based triggers. Idempotent: arm() disarms first, so
+  // this is safe to call on both install and hot-reload.
+  private armTriggers(chart: Chart): void {
+    this.scheduler.arm(chart.name, chart.triggers ?? [], (t) => this.fireTrigger(chart.name, t))
+  }
+
+  // A scheduled tick: submit a marble at the trigger's source with its static
+  // context. Goes through submit() -> mutate(), so it serializes with reloads.
+  private async fireTrigger(name: string, t: { start: string; context?: Record<string, unknown> }): Promise<void> {
+    logLine(name, `trigger fired start=${t.start}`)
+    await this.submit(name, { start: t.start, context: t.context ?? {} })
   }
 
   // Keep one Tinstar browser-widget per chart pointing at our UI. Tolerates
@@ -375,6 +470,26 @@ export class Daemon {
       await this.chartStore!.write(chart.name, yamlText)
       await this.installRuntime(chart, this.chartStore!.path(chart.name))
       logLine(chart.name, "registered")
+      return { name: chart.name, warnings: lint.warnings }
+    })
+  }
+
+  // Register a chart that lives at an arbitrary path (register-by-reference): a
+  // symlink into the store dir keeps it discoverable across restarts with no
+  // side index. Loopback-only at the route (writeGate), like every chart write.
+  async registerChartByPath(targetPath: string): Promise<{ name: string; warnings: LintWarning[] }> {
+    if (!this.chartStore) throw new ChartError("chart store not configured (set WHOACHART_CHARTS_DIR)", 501)
+    return this.mutate(async () => {
+      const abs = isAbsolute(targetPath) ? targetPath : join(process.cwd(), targetPath)
+      const chart = parseChart(await readFile(abs, "utf8")) // bad chart / ENOENT -> 400 (controlApi)
+      assertSafeChartName(chart.name)
+      if (this.runtimes.has(chart.name) || (await this.chartStore!.exists(chart.name))) {
+        throw new ChartError(`chart already exists: ${chart.name}`, 409)
+      }
+      const lint = lintChart(chart)
+      const linkPath = await this.chartStore!.link(chart.name, abs)
+      await this.installRuntime(chart, linkPath)
+      logLine(chart.name, `registered by reference -> ${abs}`)
       return { name: chart.name, warnings: lint.warnings }
     })
   }
@@ -503,9 +618,10 @@ export class Daemon {
       // revive it and abort (503) so the chart keeps serving rather than silently
       // wedging on a stopped engine until the next daemon restart.
       try {
-        await atomicWrite(existing.file, yamlText)
+        await atomicWrite(await writeTarget(existing.file), yamlText)
         const rt = await this.buildRuntime(chart, existing.file)
         this.runtimes.set(name, rt)
+        this.armTriggers(chart)
       } catch (err) {
         await existing.engine.resume()
         throw new ChartError(`chart "${name}" reload failed during rebuild: ${errMsg(err)}`, 503)
@@ -541,6 +657,8 @@ export class Daemon {
         throw new ChartError(`chart "${name}" did not quiesce for delete: ${errMsg(err)}`, 503)
       }
       this.runtimes.delete(name)
+      this.scheduler.disarm(name)
+      this.stopSupervisor(name)
       await unlink(rt.file).catch((err) => {
         if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err
       })
@@ -571,6 +689,7 @@ export class Daemon {
         id: n.id,
         type: n.type,
         name: n.name,
+        decider: n.decider,
         // Docs are intentionally NOT run through redactSecrets — they're
         // human-authored prose, not config values that might carry credentials.
         description: n.description,
@@ -586,6 +705,7 @@ export class Daemon {
       })),
       edges: rt.chart.edges.map((e) => ({ from: e.from, to: e.to, name: e.name, default: e.default, form: e.form })),
       layout: { boxes, width: rt.layout.width, height: rt.layout.height },
+      triggers: rt.chart.triggers,
       // Re-linted per request: the live chart may have been hot-reloaded since boot.
       lint: lintChart(rt.chart).warnings,
     }
@@ -612,6 +732,19 @@ export class Daemon {
       await rt.engine.submit(m)
       return m
     })
+  }
+
+  // Inbound webhook -> a marble at the bound source. The hook id comes from the
+  // chart's triggers; the request body becomes context (merged over the
+  // trigger's static context) and is form-validated inside submit(). Tailnet-
+  // internal: gated like other triggers, NOT a chart write.
+  async fireWebhook(name: string, hookId: string, body: Record<string, unknown>): Promise<Marble> {
+    const rt = this.runtimes.get(name)
+    if (!rt) throw new ChartError(`unknown chart: ${name}`, 404)
+    const trigger = (rt.chart.triggers ?? []).find((t) => t.webhook === hookId)
+    if (!trigger) throw new ChartError(`no webhook "${hookId}" on chart "${name}"`, 404)
+    logLine(name, `webhook "${hookId}" fired`)
+    return this.submit(name, { start: trigger.start, context: { ...(trigger.context ?? {}), ...body } })
   }
 
   async marbles(name: string): Promise<Marble[]> {

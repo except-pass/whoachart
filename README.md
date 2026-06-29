@@ -167,6 +167,51 @@ All optional — sensible defaults shown.
 | `WHOACHART_PUBLIC_URL` | `http://localhost:<port>` | URL browsers use to reach the daemon (set this on a tailnet/remote box — Bun binds `0.0.0.0`, so no port-forwarding needed) |
 | `TINSTAR_URL` | `http://localhost:5273` | Tinstar dashboard to post chart widgets to |
 | `WHOACHART_SPACE` | (none) | Confine all browser widgets to one Tinstar space and tear them down on shutdown — keeps dev/test noise off your main canvas |
+| `WHOACHART_AGENT_SPACE` | (none) | Tinstar space supervisor sessions are spawned into (distinct from `WHOACHART_SPACE`, which is widgets only) |
+| `WHOACHART_WATCH` | (off) | `1` auto-picks-up chart files dropped into the store dir (no restart) |
+
+---
+
+## Triggers, registration & supervisors
+
+Charts can be stored anywhere and registered with a running daemon, and can fire
+themselves on a schedule, on a webhook, or be overseen by an agent.
+
+**Register a chart from anywhere** — symlinked into the store dir, survives a restart:
+
+```bash
+curl -X POST http://localhost:5330/api/charts \
+  -H 'Content-Type: application/json' -d '{"path":"/abs/path/to/chart.yaml"}'
+```
+
+Registration is loopback-only. A raw-YAML body still registers by value (copied into the store).
+
+**Triggers** are a top-level block. Each entry binds a source node to a schedule
+or webhook; cron/interval context and webhook bodies are validated against the
+source's form:
+
+```yaml
+triggers:
+  - { cron: "0 9 * * 1-5", start: scan }   # 5-field cron, local time
+  - { every: 15m, start: scan }            # interval: <n>s|m|h
+  - { webhook: poke, start: scan }         # POST /api/hooks/<chart>/poke
+```
+
+Schedules run in-process and fire **forward-only** — ticks missed while the daemon
+was down are not replayed. Webhooks are **tailnet-internal** (loopback + Tailscale
+peers), so no extra auth; bridging public services (GitHub/Jira cloud) needs a
+separate relay.
+
+**Supervisor** — an optional long-lived agent that oversees a chart's runs. It
+resolves only gates marked `decider: agent` and never touches `decider: human`
+gates. Set `WHOACHART_AGENT_SPACE` to confine supervisor sessions to a Tinstar space.
+
+```yaml
+supervisor:
+  brief: "Resolve routing gates; leave approvals to a human."
+nodes:
+  - { id: route, type: human, decider: agent, config: {} }
+```
 
 ---
 
@@ -201,6 +246,7 @@ Runnable charts in [`examples/`](examples):
 | `agent-review.yaml` | An agent-review pipeline lane |
 | `jira-morning.yaml` | Morning Jira triage → draft → approve → post |
 | `plus-one-burndown.yaml` | A burndown-style flow |
+| `automation-demo.yaml` | Cron + interval + webhook triggers, a supervisor, and an agent-decided gate |
 
 ---
 

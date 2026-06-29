@@ -1,4 +1,5 @@
 import type { CanvasControl, EnsureWidgetOpts, SessionLauncher, SpawnSessionOpts } from "../src/tinstar"
+import type { Clock } from "../src/scheduler"
 
 export class FakeCanvas implements CanvasControl {
   ensured: EnsureWidgetOpts[] = []
@@ -38,5 +39,30 @@ export class FakeLauncher implements SessionLauncher {
   }
   async stopSession(n: string) {
     this.stopped.push(n)
+  }
+}
+
+// Deterministic clock for scheduler tests. NOTE: advance(N*period) fires each
+// periodic timer AT MOST ONCE — due timers are snapshotted before any callback
+// re-arms, so a timer rescheduled during the advance lands past the new `t` and
+// waits for a further advance. To simulate k firings, call advance(period) k
+// times, not advance(k*period).
+export class FakeClock implements Clock {
+  private t = 0
+  private seq = 0
+  private timers: { at: number; fn: () => void; id: number }[] = []
+  now(): number { return this.t }
+  setTimer(ms: number, fn: () => void): () => void {
+    const id = ++this.seq
+    this.timers.push({ at: this.t + ms, fn, id })
+    return () => { this.timers = this.timers.filter((x) => x.id !== id) }
+  }
+  // Advance time, firing every timer that comes due (earliest first). A timer the
+  // callback re-arms lands past the new `t`, so it waits for a further advance.
+  advance(ms: number): void {
+    this.t += ms
+    const due = this.timers.filter((x) => x.at <= this.t).sort((a, b) => a.at - b.at)
+    this.timers = this.timers.filter((x) => x.at > this.t)
+    for (const d of due) d.fn()
   }
 }
