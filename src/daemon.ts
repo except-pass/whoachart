@@ -1,8 +1,8 @@
 import { readFile, unlink } from "node:fs/promises"
 import { watch } from "node:fs"
-import { join, basename } from "node:path"
+import { join, basename, isAbsolute } from "node:path"
 import { parseChart } from "./schema"
-import { ChartStore, ChartError, assertSafeChartName, atomicWrite } from "./chartStore"
+import { ChartStore, ChartError, assertSafeChartName, atomicWrite, writeTarget } from "./chartStore"
 import { lintChart, type LintWarning } from "./lint"
 import { registerBuiltins } from "./nodeTypes"
 import { agentSchemaNode, makeAgentNode } from "./nodeTypes/agent"
@@ -380,6 +380,26 @@ export class Daemon {
     })
   }
 
+  // Register a chart that lives at an arbitrary path (register-by-reference): a
+  // symlink into the store dir keeps it discoverable across restarts with no
+  // side index. Loopback-only at the route (writeGate), like every chart write.
+  async registerChartByPath(targetPath: string): Promise<{ name: string; warnings: LintWarning[] }> {
+    if (!this.chartStore) throw new ChartError("chart store not configured (set WHOACHART_CHARTS_DIR)", 501)
+    return this.mutate(async () => {
+      const abs = isAbsolute(targetPath) ? targetPath : join(process.cwd(), targetPath)
+      const chart = parseChart(await readFile(abs, "utf8")) // bad chart / ENOENT -> 400 (controlApi)
+      assertSafeChartName(chart.name)
+      if (this.runtimes.has(chart.name) || (await this.chartStore!.exists(chart.name))) {
+        throw new ChartError(`chart already exists: ${chart.name}`, 409)
+      }
+      const lint = lintChart(chart)
+      const linkPath = await this.chartStore!.link(chart.name, abs)
+      await this.installRuntime(chart, linkPath)
+      logLine(chart.name, `registered by reference -> ${abs}`)
+      return { name: chart.name, warnings: lint.warnings }
+    })
+  }
+
   // Rescan the chart-store dir and bring live any *.yaml not already loaded —
   // the "I dropped a file in the dir" path, hot with no restart. Mirrors the
   // boot store-dir loop: additive-only (edits/deletes stay with update/delete),
@@ -504,7 +524,7 @@ export class Daemon {
       // revive it and abort (503) so the chart keeps serving rather than silently
       // wedging on a stopped engine until the next daemon restart.
       try {
-        await atomicWrite(existing.file, yamlText)
+        await atomicWrite(await writeTarget(existing.file), yamlText)
         const rt = await this.buildRuntime(chart, existing.file)
         this.runtimes.set(name, rt)
       } catch (err) {

@@ -96,10 +96,17 @@ export function createControlApi(daemon: Daemon, port: number, opts: ControlApiO
           return json({ charts: daemon.charts() })
         }
 
-        // POST /api/charts — register a new chart from a raw YAML request body.
+        // POST /api/charts — register a chart. A JSON `{path}` body registers
+        // BY REFERENCE (symlink to a file anywhere on disk); any other body is
+        // raw YAML registered BY VALUE (copied into the store). Both loopback-only.
         if (req.method === "POST" && url.pathname === "/api/charts") {
           const blocked = writeGate(addr)
           if (blocked) return blocked
+          if ((req.headers.get("content-type") ?? "").includes("application/json")) {
+            const body = (await req.json().catch(() => ({}))) as { path?: unknown }
+            if (typeof body.path === "string") return json(await daemon.registerChartByPath(body.path), 201)
+            return json({ error: "expected { path } for a JSON register" }, 400)
+          }
           return json(await daemon.registerChart(await req.text()), 201)
         }
 

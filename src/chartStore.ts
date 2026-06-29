@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, writeFile, rename, unlink } from "node:fs/promises"
+import { mkdir, readdir, readFile, writeFile, rename, unlink, symlink, lstat, realpath } from "node:fs/promises"
 import { join } from "node:path"
 
 // HTTP-shaped error for the chart-store CRUD path. The control API maps `status`
@@ -48,6 +48,18 @@ export async function atomicWrite(path: string, content: string): Promise<void> 
     await unlink(tmp).catch(() => {}) // don't orphan the tmp file if the rename fails
     throw err
   }
+}
+
+// The real file to write when updating a chart. A chart registered BY REFERENCE
+// is a symlink in the store dir; follow it so an edit lands on the user's file
+// instead of atomicWrite's tmp+rename clobbering the link with a plain file.
+export async function writeTarget(path: string): Promise<string> {
+  try {
+    if ((await lstat(path)).isSymbolicLink()) return await realpath(path)
+  } catch {
+    // lstat/realpath failure (dangling link, race): fall back to the path as-is.
+  }
+  return path
 }
 
 // Server-owned directory of chart *.yaml files. Separate concern from the marble
@@ -105,5 +117,15 @@ export class ChartStore {
   async write(name: string, yamlText: string): Promise<void> {
     await this.init()
     await atomicWrite(this.path(name), yamlText)
+  }
+
+  // Register an external chart BY REFERENCE: a symlink <name>.yaml -> target.
+  // listNames/resolvePath/read already follow symlinks, so the dir stays the
+  // registry with no side index. Returns the symlink path (the runtime's file).
+  async link(name: string, target: string): Promise<string> {
+    await this.init()
+    const linkPath = this.path(name) // assertSafeChartName runs inside path()
+    await symlink(target, linkPath)
+    return linkPath
   }
 }
