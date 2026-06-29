@@ -62,6 +62,9 @@ async function main(): Promise<void> {
     // that Tinstar space and tear them down on shutdown — keeps dev/test noise
     // off the primary workspace.
     space: process.env.WHOACHART_SPACE || undefined,
+    // Supervisor sessions land in this Tinstar space (distinct from `space`,
+    // which is widgets only). Unset → Tinstar's active space.
+    agentSpace: process.env.WHOACHART_AGENT_SPACE || undefined,
   })
   await daemon.start()
   createControlApi(daemon, port)

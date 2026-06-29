@@ -32,6 +32,10 @@ export interface SpawnSessionOpts {
   project?: string
   cliTemplate?: string
   worktree?: boolean
+  // Tinstar space to place the session in (supervisor sessions). Forwarded in the
+  // create body; Tinstar honors it where supported, else the session lands in the
+  // active space (best-effort, same degradation as widget placement).
+  spaceId?: string
 }
 
 // Minimal surface for spawning/stopping agent sessions — injectable for tests.

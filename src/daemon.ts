@@ -14,6 +14,7 @@ import { LogBuffer, type LogDelta } from "./view/logBuffer"
 import { layoutChart, type Layout, type NodeBox } from "./view/layout"
 import { now, deepMerge } from "./util"
 import { Scheduler, realClock, type Clock } from "./scheduler"
+import { buildSupervisorBrief } from "./supervisor"
 import { validateForm } from "./forms"
 import type { CanvasControl, SessionLauncher, SpawnSessionOpts } from "./tinstar"
 import type { Chart, ChartNode, FormField, Marble, PresentSpec } from "./types"
@@ -66,6 +67,9 @@ export interface DaemonOpts {
   // Injectable clock for the trigger scheduler (FakeClock in tests). Defaults to
   // realClock (setTimeout).
   clock?: Clock
+  // Tinstar space NAME for supervisor sessions (WHOACHART_AGENT_SPACE) — distinct
+  // from `space` (widgets). Resolved to an id once at start; unset → active space.
+  agentSpace?: string
   // Tinstar canvas controls (widget ensure + pan). FakeCanvas in tests.
   client: CanvasControl
   concurrency?: number
@@ -184,6 +188,8 @@ export class Daemon {
   private createdWidgets: Array<{ chart: string; widgetId: string }> = []
   private chartStore?: ChartStore
   private scheduler!: Scheduler
+  private supervisors = new Map<string, string>() // chart -> supervisor session name
+  private agentSpaceId?: string
   // Charts that failed to parse/install at boot. Boot SKIPS a bad chart and
   // records it here rather than crashing the whole daemon (a single malformed
   // file must not take down every other chart). Inspect after start().
@@ -252,6 +258,12 @@ export class Daemon {
       }
     }
 
+    // Resolve the supervisor-session space once (best-effort; unset/unresolvable
+    // → sessions land in Tinstar's active space).
+    if (this.opts.agentSpace) {
+      this.agentSpaceId = (await this.opts.client.ensureSpace(this.opts.agentSpace)) ?? undefined
+    }
+
     // Explicit boot-load list (existing behavior). A malformed chart is skipped
     // and recorded (bootErrors) — one bad file must not crash the daemon.
     for (const path of this.opts.charts ?? []) {
@@ -314,7 +326,49 @@ export class Daemon {
     this.runtimes.set(chart.name, rt)
     this.ensureWidgetLoop(chart)
     this.armTriggers(chart)
+    this.ensureSupervisor(chart)
     return rt
+  }
+
+  // Keep one long-lived supervisor session per chart that has a `supervisor:`
+  // block. Tolerates Tinstar being down: logs and retries on a timer, never
+  // crashes the daemon (mirrors ensureWidgetLoop). No-op without a launcher.
+  private ensureSupervisor(chart: Chart, retryMs = 15_000): void {
+    if (!chart.supervisor || !this.launcher) return
+    if (this.supervisors.has(chart.name)) return
+    const sessionName = `wc-sup-${chart.name}`.toLowerCase().replace(/[^a-z0-9-]/g, "-")
+    const sup = chart.supervisor
+    const attempt = (): void => {
+      // Bail if the chart was deleted/replaced while a retry was pending, or a
+      // prior attempt already landed the session.
+      if (!this.runtimes.has(chart.name) || this.supervisors.has(chart.name)) return
+      this.launcher!.spawnSession({
+        name: sessionName,
+        prompt: buildSupervisorBrief(chart, this.baseUrl),
+        project: sup.project,
+        cliTemplate: sup.cli_template,
+        spaceId: this.agentSpaceId,
+      }).then(
+        () => { this.supervisors.set(chart.name, sessionName); logLine(chart.name, `supervisor spawned name=${sessionName}`) },
+        (err) => {
+          logLine(chart.name, `supervisor spawn failed (${String(err).split("\n")[0]}); retrying in ${retryMs / 1000}s`)
+          const t = setTimeout(attempt, retryMs)
+          ;(t as unknown as { unref?: () => void }).unref?.()
+        },
+      )
+    }
+    attempt()
+  }
+
+  // Stop a chart's supervisor session (delete path). Fire-and-forget; a rejecting
+  // launcher must not surface as an unhandled rejection.
+  private stopSupervisor(name: string): void {
+    const session = this.supervisors.get(name)
+    if (!session || !this.launcher) return
+    this.supervisors.delete(name)
+    void this.launcher.stopSession(session).catch((err) =>
+      logLine(name, `supervisor stop failed for ${session}: ${String(err).split("\n")[0]}`),
+    )
   }
 
   // (Re)arm a chart's time-based triggers. Idempotent: arm() disarms first, so
@@ -586,6 +640,7 @@ export class Daemon {
       }
       this.runtimes.delete(name)
       this.scheduler.disarm(name)
+      this.stopSupervisor(name)
       await unlink(rt.file).catch((err) => {
         if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err
       })
