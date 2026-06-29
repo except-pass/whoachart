@@ -13,6 +13,7 @@ import { ViewState, type ViewSnapshot } from "./view/viewState"
 import { LogBuffer, type LogDelta } from "./view/logBuffer"
 import { layoutChart, type Layout, type NodeBox } from "./view/layout"
 import { now, deepMerge } from "./util"
+import { Scheduler, realClock, type Clock } from "./scheduler"
 import { validateForm } from "./forms"
 import type { CanvasControl, SessionLauncher, SpawnSessionOpts } from "./tinstar"
 import type { Chart, ChartNode, FormField, Marble, PresentSpec } from "./types"
@@ -62,6 +63,9 @@ export interface DaemonOpts {
   // its charts are boot-loaded too and register/update/delete operate on it.
   chartsDir?: string
   storeDir: string
+  // Injectable clock for the trigger scheduler (FakeClock in tests). Defaults to
+  // realClock (setTimeout).
+  clock?: Clock
   // Tinstar canvas controls (widget ensure + pan). FakeCanvas in tests.
   client: CanvasControl
   concurrency?: number
@@ -179,6 +183,7 @@ export class Daemon {
   private spaceId?: string
   private createdWidgets: Array<{ chart: string; widgetId: string }> = []
   private chartStore?: ChartStore
+  private scheduler!: Scheduler
   // Charts that failed to parse/install at boot. Boot SKIPS a bad chart and
   // records it here rather than crashing the whole daemon (a single malformed
   // file must not take down every other chart). Inspect after start().
@@ -205,6 +210,9 @@ export class Daemon {
   async start(): Promise<void> {
     if (!hasNodeType("end")) registerBuiltins()
     this.baseUrl = this.opts.baseUrl ?? "http://localhost:5330"
+    this.scheduler = new Scheduler(this.opts.clock ?? realClock, (chart, err) =>
+      logLine(chart, `trigger fire failed: ${errMsg(err)}`),
+    )
     this.launcher = this.opts.launcher ? loggingLauncher(this.opts.launcher) : undefined
     // Global registration is schema-only (for chart parsing/config validation);
     // the wired agent node is instance-scoped so this daemon's launcher/baseUrl
@@ -305,7 +313,21 @@ export class Daemon {
     const rt = await this.buildRuntime(chart, file)
     this.runtimes.set(chart.name, rt)
     this.ensureWidgetLoop(chart)
+    this.armTriggers(chart)
     return rt
+  }
+
+  // (Re)arm a chart's time-based triggers. Idempotent: arm() disarms first, so
+  // this is safe to call on both install and hot-reload.
+  private armTriggers(chart: Chart): void {
+    this.scheduler.arm(chart.name, chart.triggers ?? [], (t) => this.fireTrigger(chart.name, t))
+  }
+
+  // A scheduled tick: submit a marble at the trigger's source with its static
+  // context. Goes through submit() -> mutate(), so it serializes with reloads.
+  private async fireTrigger(name: string, t: { start: string; context?: Record<string, unknown> }): Promise<void> {
+    logLine(name, `trigger fired start=${t.start}`)
+    await this.submit(name, { start: t.start, context: t.context ?? {} })
   }
 
   // Keep one Tinstar browser-widget per chart pointing at our UI. Tolerates
@@ -527,6 +549,7 @@ export class Daemon {
         await atomicWrite(await writeTarget(existing.file), yamlText)
         const rt = await this.buildRuntime(chart, existing.file)
         this.runtimes.set(name, rt)
+        this.armTriggers(chart)
       } catch (err) {
         await existing.engine.resume()
         throw new ChartError(`chart "${name}" reload failed during rebuild: ${errMsg(err)}`, 503)
@@ -562,6 +585,7 @@ export class Daemon {
         throw new ChartError(`chart "${name}" did not quiesce for delete: ${errMsg(err)}`, 503)
       }
       this.runtimes.delete(name)
+      this.scheduler.disarm(name)
       await unlink(rt.file).catch((err) => {
         if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err
       })
