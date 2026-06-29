@@ -660,6 +660,19 @@ export class Daemon {
     })
   }
 
+  // Inbound webhook -> a marble at the bound source. The hook id comes from the
+  // chart's triggers; the request body becomes context (merged over the
+  // trigger's static context) and is form-validated inside submit(). Tailnet-
+  // internal: gated like other triggers, NOT a chart write.
+  async fireWebhook(name: string, hookId: string, body: Record<string, unknown>): Promise<Marble> {
+    const rt = this.runtimes.get(name)
+    if (!rt) throw new ChartError(`unknown chart: ${name}`, 404)
+    const trigger = (rt.chart.triggers ?? []).find((t) => t.webhook === hookId)
+    if (!trigger) throw new ChartError(`no webhook "${hookId}" on chart "${name}"`, 404)
+    logLine(name, `webhook "${hookId}" fired`)
+    return this.submit(name, { start: trigger.start, context: { ...(trigger.context ?? {}), ...body } })
+  }
+
   async marbles(name: string): Promise<Marble[]> {
     return this.rt(name).store.all()
   }

@@ -45,6 +45,7 @@ export interface ControlApiOpts {
 //   GET  /api/charts/:name/def            (chart topology + layout)
 //   GET  /api/charts/:name/state          (bounded live view aggregate; polled by the canvas page)
 //   GET  /api/charts/:name/nodes/:id/logs (live-output delta: ?since=<seq>&marble=<id>)
+//   POST /api/hooks/:chart/:hook          (tailnet-internal inbound trigger)
 //   POST /api/charts/:name/marbles        { context?, workpiece?, start? }
 //   GET  /api/charts/:name/marbles
 //   GET  /api/charts/:name/marbles/:id
@@ -116,6 +117,16 @@ export function createControlApi(daemon: Daemon, port: number, opts: ControlApiO
           const blocked = writeGate(addr)
           if (blocked) return blocked
           return json(await daemon.loadNewCharts())
+        }
+
+        // POST /api/hooks/:chart/:hook — tailnet-internal inbound trigger. Behind
+        // the base trust gate (loopback + tailnet), NOT writeGate: it fires a run,
+        // it does not install code. Body JSON -> marble context (form-validated).
+        if (req.method === "POST" && p[0] === "api" && p[1] === "hooks" && p[2] && p[3] && !p[4]) {
+          const parsed = await req.json().catch(() => ({}))
+          const body = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {}
+          const m = await daemon.fireWebhook(p[2], p[3], body)
+          return json({ id: m.id, status: m.status }, 202)
         }
 
         if (p[0] === "api" && p[1] === "charts" && p[2] && p[3] === "def" && req.method === "GET") {
