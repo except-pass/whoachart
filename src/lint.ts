@@ -118,6 +118,20 @@ export function lintChart(chart: Chart): LintResult {
     }
   }
 
+  // Hook matchers: a `node:`/`edge:` that names nothing in the chart is almost
+  // certainly a typo — the hook would silently never fire. Advisory only (a typo
+  // must not reject the chart or break hot-reload; that is why this is a lint
+  // warning rather than a parseChart error).
+  const edgeNames = new Set(chart.edges.map((e) => e.name).filter((x): x is string => x !== undefined))
+  for (const h of chart.hooks ?? []) {
+    if (h.node !== undefined && !ids.has(h.node)) {
+      push({ level: "warn", code: "hook-unknown-node", node: h.node, message: `hook on:${h.on} targets unknown node "${h.node}" — it will never fire` })
+    }
+    if (h.edge !== undefined && !edgeNames.has(h.edge)) {
+      push({ level: "warn", code: "hook-unknown-edge", message: `hook on:${h.on} targets unknown edge "${h.edge}" — it will never fire` })
+    }
+  }
+
   return { errors: [], warnings }
 }
 
