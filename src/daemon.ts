@@ -2,7 +2,9 @@ import { readFile, unlink } from "node:fs/promises"
 import { watch } from "node:fs"
 import { join, basename, isAbsolute } from "node:path"
 import { parseChart } from "./schema"
+import { parseCollection } from "./collectionSchema"
 import { ChartStore, ChartError, assertSafeChartName, atomicWrite, writeTarget } from "./chartStore"
+import { CollectionStore } from "./collectionStore"
 import { lintChart, type LintWarning } from "./lint"
 import { registerBuiltins } from "./nodeTypes"
 import { agentSchemaNode, makeAgentNode } from "./nodeTypes/agent"
@@ -18,7 +20,7 @@ import { buildSupervisorBrief } from "./supervisor"
 import { validateForm } from "./forms"
 import type { CanvasControl, SessionLauncher, SpawnSessionOpts } from "./tinstar"
 import { SpawnSessionError } from "./tinstar"
-import type { Chart, ChartNode, ChartTrigger, FormField, HookEvent, Marble, PresentSpec } from "./types"
+import type { Chart, ChartNode, ChartTrigger, Collection, FormField, HookEvent, Marble, PresentSpec } from "./types"
 
 // One timestamped line per lifecycle event — the operator audit trail.
 function logLine(chart: string, msg: string): void {
@@ -68,6 +70,10 @@ export interface DaemonOpts {
   // Server-owned writable directory of chart *.yaml — the CRUD store. When set,
   // its charts are boot-loaded too and register/update/delete operate on it.
   chartsDir?: string
+  // Server-owned directory of collection manifest *.yaml — the collection
+  // registry. SEPARATE from chartsDir on purpose (a manifest in the chart dir
+  // would be parsed as a chart at boot). Unset → collections disabled (501).
+  collectionsDir?: string
   storeDir: string
   // Injectable clock for the trigger scheduler (FakeClock in tests). Defaults to
   // realClock (setTimeout).
@@ -160,6 +166,32 @@ export interface ChartDef {
   lint: LintWarning[]
 }
 
+// Live status of one collection member, composed for the index card. A member
+// referencing a chart that is NOT currently loaded is `missing: true` with no
+// counts — the collection describes charts, it does not load them, so an absent
+// chart is a stale card, never an error (origin R4/R8). Counts are derived from
+// the chart's existing ViewState snapshot — no new per-marble telemetry.
+export interface MemberStatus {
+  name: string
+  missing: boolean
+  inFlight?: number // live marbles (queued + running + blocked)
+  blocked?: number // live marbles parked at a gate
+  failed?: number // dead-lettered (errored) marbles
+  ended?: number // marbles that reached an end node (success or rejection)
+  // Best-effort recency hint: the outcome of the most recent terminal marble
+  // the snapshot still remembers. null when nothing has ended yet. Precise
+  // last-run timestamps are out of scope (the snapshot carries no end times).
+  lastOutcome?: "done" | "failed" | null
+}
+
+// A collection's identity plus its members' live status, as served to the index.
+export interface CollectionView {
+  name: string
+  title: string
+  description: string
+  members: MemberStatus[]
+}
+
 // Key names whose VALUES are masked before a node's config is shipped to the
 // (tailnet-reachable) inspector. Keys stay visible — the inspector's job is to
 // show what a node does — but credentials don't leave the daemon. Anything under
@@ -199,6 +231,11 @@ export class Daemon {
   private spaceId?: string
   private createdWidgets: Array<{ chart: string; widgetId: string }> = []
   private chartStore?: ChartStore
+  // Collection manifests, keyed by name. Each carries the file it was loaded
+  // from so a future watch/reload can write back. Parallel to `runtimes` but a
+  // separate concern: a collection only REFERENCES charts, it owns no runtime.
+  private collectionRegistry = new Map<string, { collection: Collection; file: string }>()
+  private collectionStore?: CollectionStore
   private scheduler!: Scheduler
   private supervisors = new Map<string, string>() // chart -> supervisor session name
   private agentSpaceId?: string
@@ -245,6 +282,7 @@ export class Daemon {
       ["agent", makeAgentNode(launcher, (m) => `${this.baseUrl}/api/charts/${m.chart}/marbles/${m.id}/signal`)],
     ])
     if (this.opts.chartsDir) this.chartStore = new ChartStore(this.opts.chartsDir)
+    if (this.opts.collectionsDir) this.collectionStore = new CollectionStore(this.opts.collectionsDir)
 
     // Confine this daemon's canvas footprint to a named Tinstar space when
     // WHOACHART_SPACE is set. Resolve (creating if needed) ONCE so the 15s
@@ -292,6 +330,29 @@ export class Daemon {
         const file = await this.chartStore.resolvePath(name) // honor a legacy .yml
         await this.bootLoad(name, file)
       }
+    }
+    // Collection manifests (the registry). A bad manifest is isolated into
+    // bootErrors exactly like a bad chart — one malformed file must not sink the
+    // others, and definitely must not crash the daemon.
+    if (this.collectionStore) {
+      for (const name of await this.collectionStore.listNames()) {
+        const file = await this.collectionStore.resolvePath(name)
+        await this.bootLoadCollection(name, file)
+      }
+    }
+  }
+
+  // Parse + register one collection manifest at boot, isolating failure: a bad
+  // file is recorded in bootErrors (namespaced so a collection and a chart of
+  // the same name don't look like one error) instead of crashing start().
+  private async bootLoadCollection(name: string, file: string): Promise<void> {
+    try {
+      const collection = parseCollection(await readFile(file, "utf8"))
+      this.collectionRegistry.set(collection.name, { collection, file })
+    } catch (err) {
+      const error = errMsg(err)
+      this.bootErrors.push({ name: `collection:${name}`, error })
+      logLine(`collection:${name}`, `boot-load skipped (invalid manifest): ${error}`)
     }
   }
 
@@ -746,6 +807,128 @@ export class Daemon {
       // Re-linted per request: the live chart may have been hot-reloaded since boot.
       lint: lintChart(rt.chart).warnings,
     }
+  }
+
+  // Names of every loaded collection (the registry listing).
+  collections(): string[] {
+    return [...this.collectionRegistry.keys()]
+  }
+
+  // Compose a collection's identity + each member's live status. Members are
+  // resolved against currently-loaded runtimes: a member naming an unloaded
+  // chart is `missing: true` (R4/R8) — the call never throws on a stale member,
+  // and the other members compose normally. Throws ChartError(404) only when the
+  // COLLECTION itself is unknown.
+  collection(name: string): CollectionView {
+    // Check the store first so a read on a daemon with collections DISABLED is a
+    // 501 (feature off), not a 404 (name not found) — otherwise a client can't
+    // tell "collections unconfigured" from "typo'd name". Mirrors the 501 the
+    // write paths already return; the plan (U3) specifies 501 on this read too.
+    if (!this.collectionStore) throw new ChartError("collection store not configured (set WHOACHART_COLLECTIONS_DIR)", 501)
+    const entry = this.collectionRegistry.get(name)
+    if (!entry) throw new ChartError(`unknown collection: ${name}`, 404)
+    const { collection } = entry
+    return {
+      name: collection.name,
+      title: collection.title,
+      description: collection.description,
+      members: collection.members.map((m) => this.memberStatus(m)),
+    }
+  }
+
+  // Reduce one chart's live ViewState snapshot to the counts a member card shows.
+  // No new telemetry: everything comes from the snapshot the canvas already polls.
+  private memberStatus(name: string): MemberStatus {
+    const rt = this.runtimes.get(name)
+    if (!rt) return { name, missing: true }
+    const snap = rt.view.snapshot()
+    const blocked = snap.live.filter((m) => m.status === "blocked").length
+    const ended = Object.values(snap.ends).reduce((sum, t) => sum + t.total, 0)
+    // lastOutcome is only HONEST on a single-END-NODE chart: the snapshot carries
+    // no cross-end ordering, so a chart with multiple ends can't say which run
+    // finished most recently, and a "last: done" badge that silently reflects an
+    // arbitrary end would mislead. Key on the chart's end-node COUNT (not how many
+    // ends have fired yet) so the badge's presence is stable, not flickering on as
+    // the first end fires and off once a second does. One end → recent.at(-1) is
+    // the most recent terminal; multiple (or zero) ends → leave it null.
+    const endNodeCount = rt.chart.nodes.filter((n) => n.type === "end").length
+    let lastOutcome: "done" | "failed" | null = null
+    if (endNodeCount === 1) {
+      const tally = Object.values(snap.ends)[0]
+      const last = tally?.recent.at(-1)
+      if (last) lastOutcome = last.status === "failed" ? "failed" : "done"
+    }
+    return {
+      name,
+      missing: false,
+      inFlight: snap.live.length,
+      blocked,
+      failed: snap.deadLetter.length,
+      ended,
+      lastOutcome,
+    }
+  }
+
+  // Register a brand-new collection from a manifest and bring it live (hot, no
+  // restart). Rejects 409 if the name already exists. Serialized via mutate() so
+  // it can't interleave with a concurrent chart/collection swap.
+  async registerCollection(yamlText: string): Promise<{ name: string }> {
+    if (!this.collectionStore) throw new ChartError("collection store not configured (set WHOACHART_COLLECTIONS_DIR)", 501)
+    return this.mutate(async () => {
+      const collection = parseCollection(yamlText) // schema errors → 400 (controlApi)
+      assertSafeChartName(collection.name) // path-traversal guard before any fs op
+      if (this.collectionRegistry.has(collection.name) || (await this.collectionStore!.exists(collection.name))) {
+        throw new ChartError(`collection already exists: ${collection.name}`, 409)
+      }
+      await this.collectionStore!.write(collection.name, yamlText)
+      const file = this.collectionStore!.path(collection.name)
+      this.collectionRegistry.set(collection.name, { collection, file })
+      logLine(`collection:${collection.name}`, "registered")
+      return { name: collection.name }
+    })
+  }
+
+  // Register a collection manifest that lives at an arbitrary path (register-by-
+  // reference): a symlink into the store dir keeps it discoverable across
+  // restarts with no side index. Loopback-only at the route, like every write.
+  async registerCollectionByPath(targetPath: string): Promise<{ name: string }> {
+    if (!this.collectionStore) throw new ChartError("collection store not configured (set WHOACHART_COLLECTIONS_DIR)", 501)
+    return this.mutate(async () => {
+      const abs = isAbsolute(targetPath) ? targetPath : join(process.cwd(), targetPath)
+      const collection = parseCollection(await readFile(abs, "utf8")) // bad manifest / ENOENT → 400
+      assertSafeChartName(collection.name)
+      if (this.collectionRegistry.has(collection.name) || (await this.collectionStore!.exists(collection.name))) {
+        throw new ChartError(`collection already exists: ${collection.name}`, 409)
+      }
+      const linkPath = await this.collectionStore!.link(collection.name, abs)
+      this.collectionRegistry.set(collection.name, { collection, file: linkPath })
+      logLine(`collection:${collection.name}`, `registered by reference -> ${abs}`)
+      return { name: collection.name }
+    })
+  }
+
+  // Rescan the collection-store dir and bring live any manifest not already
+  // loaded — the "I dropped a manifest in the dir" path, hot with no restart.
+  // Additive-only and isolates a bad file, mirroring loadNewCharts.
+  async loadNewCollections(): Promise<{ loaded: string[]; errors: { name: string; error: string }[] }> {
+    if (!this.collectionStore) throw new ChartError("collection store not configured (set WHOACHART_COLLECTIONS_DIR)", 501)
+    return this.mutate(async () => {
+      const loaded: string[] = []
+      const errors: { name: string; error: string }[] = []
+      for (const name of await this.collectionStore!.listNames()) {
+        if (this.collectionRegistry.has(name)) continue
+        try {
+          const file = await this.collectionStore!.resolvePath(name)
+          const collection = parseCollection(await readFile(file, "utf8"))
+          this.collectionRegistry.set(collection.name, { collection, file })
+          loaded.push(collection.name)
+          logLine(`collection:${collection.name}`, "loaded (rescan)")
+        } catch (err) {
+          errors.push({ name, error: errMsg(err) })
+        }
+      }
+      return { loaded, errors }
+    })
   }
 
   // NOTE: `opts.start` targeting a non-source node bypasses intake-form

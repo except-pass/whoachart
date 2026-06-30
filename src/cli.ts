@@ -66,6 +66,16 @@ async function main(argv: string[]): Promise<void> {
     // Pick up chart files dropped into the store dir since boot — no restart.
     const res = await fetch(`${base}/api/charts/reload`, { method: "POST" })
     console.log(JSON.stringify(await res.json(), null, 2))
+  } else if (a.cmd === "collections") {
+    // Parity with `charts`: list registered collections so an agent/operator can
+    // discover them from the CLI, not just the browser UI or by reading the API.
+    const res = await fetch(`${base}/api/collections`)
+    console.log(JSON.stringify(await res.json(), null, 2))
+  } else if (a.cmd === "collections-reload") {
+    // Parity with `reload`: pick up collection manifests dropped into the
+    // collections dir since boot — no restart.
+    const res = await fetch(`${base}/api/collections/reload`, { method: "POST" })
+    console.log(JSON.stringify(await res.json(), null, 2))
   } else if (a.cmd === "submit") {
     if (!a.chart) throw new Error("usage: whoachart submit <chart> [--context json] [--workpiece path]")
     const res = await fetch(`${base}/api/charts/${a.chart}/marbles`, {
@@ -99,7 +109,7 @@ async function main(argv: string[]): Promise<void> {
     })
     console.log(JSON.stringify(await res.json(), null, 2))
   } else {
-    console.log("usage: whoachart <charts|reload|submit|marbles|signal|annotate> [...]  (--port N)")
+    console.log("usage: whoachart <charts|reload|collections|collections-reload|submit|marbles|signal|annotate> [...]  (--port N)")
   }
 }
 

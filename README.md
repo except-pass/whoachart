@@ -162,6 +162,7 @@ All optional — sensible defaults shown.
 | --- | --- | --- |
 | `WHOACHART_CHARTS` | `examples` | Comma-separated dirs and/or `.yaml` files to load |
 | `WHOACHART_CHARTS_DIR` | (inferred) | The single writable chart-store dir for CRUD/hot-reload |
+| `WHOACHART_COLLECTIONS_DIR` | (none) | Dir of `collection.yaml` manifests — each groups related charts into one named, viewable **collection** (`/ui/collections/<name>`). Unset → collections disabled |
 | `WHOACHART_STORE` | `./.whoachart` | Where marble/run state is persisted |
 | `WHOACHART_PORT` | `5330` | Port the daemon binds |
 | `WHOACHART_PUBLIC_URL` | `http://localhost:<port>` | URL browsers use to reach the daemon (set this on a tailnet/remote box — Bun binds `0.0.0.0`, so no port-forwarding needed) |

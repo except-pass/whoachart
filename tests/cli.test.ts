@@ -13,6 +13,11 @@ test("parses charts command", () => {
   expect(parseArgs(["charts"]).cmd).toBe("charts")
 })
 
+test("parses the collections commands", () => {
+  expect(parseArgs(["collections"]).cmd).toBe("collections")
+  expect(parseArgs(["collections-reload"]).cmd).toBe("collections-reload")
+})
+
 test("parses marbles command with chart", () => {
   const a = parseArgs(["marbles", "demo"])
   expect(a.cmd).toBe("marbles")

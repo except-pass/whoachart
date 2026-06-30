@@ -25,13 +25,16 @@ export function assertSafeChartName(name: string): void {
   }
 }
 
-async function fileExists(path: string): Promise<boolean> {
+// Exported so the parallel CollectionStore reuses this one definition rather than
+// re-declaring it — a real read error (perms, I/O) must not masquerade as "absent",
+// and that subtlety should live in exactly one place.
+export async function fileExists(path: string): Promise<boolean> {
   try {
     await readFile(path, "utf8")
     return true
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return false
-    throw err // a real read error (perms, I/O) must not masquerade as "absent"
+    throw err
   }
 }
 
