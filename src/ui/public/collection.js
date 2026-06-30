@@ -1,19 +1,23 @@
 // whoachart collection client. Draws the collection index (one card per member
-// chart with live status) from /api/collections/:name, polls on the same 600ms
-// cadence as the per-chart page, and toggles a combined canvas that tiles each
-// loaded member's existing chart view (live animation comes for free — each tile
-// is the per-chart page polling its own /state). The page never reloads.
+// chart with live status) from /api/collections/:name, and a combined canvas that
+// renders every loaded member's node-graph INLINE as SVG (no iframes) via the
+// shared mini-graph renderer — one poll loop refreshes the index and every cell.
+// The page never reloads.
 import { escHtml } from "./helpers.js"
+import { renderMiniChart } from "./miniChart.js"
 
 // Optional-chained so importing this module in a DOM test (no WHOACHART set)
 // doesn't throw or auto-start the poll loop; start() is gated on it below.
 const NAME = globalThis.WHOACHART?.collection
 const $ = (id) => document.getElementById(id)
 const POLL_MS = 600 // matches the per-chart page so liveness feels uniform
+const SVGNS = "http://www.w3.org/2000/svg"
 
 let canvasOpen = false // index is the default surface (R13); canvas is opt-in
-let tilesBuilt = false // are member iframes currently mounted? (drives teardown)
+let cellsBuilt = false // are the member SVG cells currently mounted?
 let lastView = null
+const cellSvgs = new Map() // member name -> its <svg> (current canvas cells)
+const defCache = new Map() // member name -> /def payload (topology is static between hot-reloads)
 
 // Status badges for one member card. Order is fixed so cards read consistently;
 // a zero count is omitted to keep a calm card calm.
@@ -55,35 +59,59 @@ export function renderIndex(view) {
   cards.innerHTML = view.members.map(card).join("")
 }
 
-// Build the combined canvas: a tile per LOADED member (a missing member has no
-// chart to render, so it stays on the index only). Each tile embeds the per-chart
-// page, which polls its own /state — so marbles animate live across every tile
-// simultaneously (R11/R12) without this client touching graph code. Rebuilt fresh
-// on each open so it reflects current membership rather than a one-shot snapshot.
-export function renderTiles(view) {
-  const loaded = view.members.filter((m) => !m.missing)
-  // RELATIVE iframe src (../charts/, not /ui/charts/) — CRITICAL under Tinstar.
-  // Tinstar serves this page through its widget proxy on the Tinstar ORIGIN. A
-  // root-relative /ui/charts/:name escapes the proxy to that origin, whose SPA
-  // fallback returns the Tinstar canvas app for ANY unknown path — so each tile
-  // would boot a full nested Tinstar canvas (N tiles = N Tinstars = browser meltdown),
-  // not the whoachart chart. The relative path resolves to the chart when served
-  // direct and stays inside the proxy when embedded (same rule as the ../app.js src).
-  $("tiles").innerHTML = loaded
-    .map(
-      (m) => `<div class="tile"><div class="th">${escHtml(m.name)}</div>` +
-        `<iframe src="../charts/${encodeURIComponent(m.name)}" title="${escHtml(m.name)}"></iframe></div>`,
-    )
-    .join("")
-  tilesBuilt = true
+// Build the combined canvas: one cell per LOADED member (a missing member has no
+// chart to render, so it stays on the index only). Each cell is a header linking
+// to the full chart plus an inline <svg> the poll loop draws into — NO iframes, so
+// the nested-Tinstar-proxy class of bug cannot recur and there are no N nested
+// apps. Rebuilt fresh on each open so it reflects current membership.
+export function buildCells(view) {
+  const tiles = $("tiles")
+  tiles.innerHTML = ""
+  cellSvgs.clear()
+  for (const m of view.members.filter((x) => !x.missing)) {
+    const cell = document.createElement("div")
+    cell.className = "cell"
+    // RELATIVE deep-link (proxy-safe) — same rule as the index card href.
+    cell.innerHTML = `<div class="ch"><a href="../charts/${encodeURIComponent(m.name)}">${escHtml(m.name)}</a></div>`
+    const svg = document.createElementNS(SVGNS, "svg")
+    svg.setAttribute("class", "mc")
+    cell.appendChild(svg)
+    tiles.appendChild(cell)
+    cellSvgs.set(m.name, svg)
+  }
+  cellsBuilt = true
 }
 
-// Tear the tiles down (not just hide): each embedded chart page runs its own
-// 600ms /state poll, so leaving hidden iframes mounted leaks N poll loops for the
-// page lifetime. Clearing the container unmounts the iframes and stops them.
-function teardownTiles() {
+// Refresh every mounted cell from live data. ONE call per tick (not one loop per
+// member): fetch each member's /def (cached — topology is static) and /state in
+// parallel via ROOT-RELATIVE fetch (Tinstar's proxy shims fetch, so this is the
+// proxy-safe data path), then redraw its graph. A per-member failure is isolated
+// so one bad chart can't blank the rest.
+export async function refreshCells() {
+  await Promise.all(
+    [...cellSvgs.entries()].map(async ([name, svg]) => {
+      try {
+        if (!defCache.has(name)) {
+          const dr = await fetch(`/api/charts/${encodeURIComponent(name)}/def`, { cache: "no-store" })
+          if (!dr.ok) return
+          defCache.set(name, await dr.json())
+        }
+        const sr = await fetch(`/api/charts/${encodeURIComponent(name)}/state`, { cache: "no-store" })
+        if (!sr.ok) return
+        renderMiniChart(svg, defCache.get(name), await sr.json())
+      } catch (e) {
+        console.error(`collection cell ${name} failed`, e)
+      }
+    }),
+  )
+}
+
+// Unmount the cells (clear the container) and forget their svgs. The cached defs
+// can persist across open/close — topology doesn't change — so reopening is cheap.
+function teardownCells() {
   $("tiles").innerHTML = ""
-  tilesBuilt = false
+  cellSvgs.clear()
+  cellsBuilt = false
 }
 
 export function setCanvas(open, view) {
@@ -94,12 +122,12 @@ export function setCanvas(open, view) {
   btn.classList.toggle("on", open)
   btn.textContent = open ? "◂ index" : "canvas ▸"
   if (open) {
-    // Build from the latest data we have. If the first poll hasn't landed yet
-    // (view null), tick() builds the tiles as soon as it does — so an early
-    // toggle no longer leaves the canvas permanently empty.
-    if (view) renderTiles(view)
+    // Build cell scaffolding from the latest membership; the poll loop fills the
+    // graphs. If the first poll hasn't landed yet (view null), tick() builds them
+    // as soon as it does — so an early toggle no longer leaves the canvas blank.
+    if (view) buildCells(view)
   } else {
-    teardownTiles()
+    teardownCells()
   }
 }
 
@@ -108,16 +136,16 @@ async function tick() {
   if (!res.ok) return
   const view = await res.json()
   lastView = view
-  // Always keep the index fresh; the canvas tiles self-poll once mounted, so we
-  // don't rebuild them on every tick (that would reset each iframe's animation).
   renderIndex(view)
-  // If the operator opened the canvas before the first poll landed, build the
-  // tiles now that data exists — without this the early-toggle canvas stays blank.
-  if (canvasOpen && !tilesBuilt) renderTiles(view)
+  if (canvasOpen) {
+    // Build cells if the canvas was opened before the first poll, then draw graphs.
+    if (!cellsBuilt) buildCells(view)
+    await refreshCells()
+  }
 }
 
 // Chained, not setInterval: a slow response can't overlap-and-stack (mirrors the
-// per-chart page's poll loop).
+// per-chart page's poll loop). ONE loop drives both the index and the canvas.
 function pollLoop() {
   tick().catch((e) => console.error("collection tick failed", e)).finally(() => setTimeout(pollLoop, POLL_MS))
 }

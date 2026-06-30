@@ -40,12 +40,21 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family
 .badge.outcome-done{color:var(--green)}.badge.outcome-failed{color:var(--red)}
 .card .stale{font:10.5px monospace;color:var(--amber);margin-top:10px}
 .empty{color:var(--dim);font:12px monospace;padding:20px}
-/* canvas: tiled member graphs */
+/* canvas: member node-graphs rendered INLINE as SVG (no iframes) — one cell per
+   loaded member, each filled by the shared mini-graph renderer. */
 .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:12px}
-.tile{border:1px solid var(--line);border-radius:11px;overflow:hidden;background:var(--card);
+.cell{border:1px solid var(--line);border-radius:11px;overflow:hidden;background:var(--card);
   display:flex;flex-direction:column;height:340px}
-.tile .th{padding:6px 11px;border-bottom:1px solid var(--line);font:11.5px system-ui;color:var(--cyan)}
-.tile iframe{border:0;width:100%;flex:1;background:var(--bg)}
+.cell .ch{padding:6px 11px;border-bottom:1px solid var(--line);font:11.5px system-ui}
+.cell .ch a{color:var(--cyan);text-decoration:none}
+.cell .ch a:hover{text-decoration:underline}
+.cell svg.mc{flex:1;width:100%;min-height:0;display:block;
+  background:radial-gradient(circle at 1px 1px,#141d28 1px,transparent 0) 0 0/26px 26px}
+/* graph primitives — mirror the per-chart canvas so cells read consistently */
+.mc .mc-edge{fill:none;stroke:#3a4a5a;stroke-width:2}
+.mc .node{fill:var(--node,#0d141c);stroke-width:1.5}
+.mc .mc-nname{fill:var(--ink);font:600 11px system-ui;text-anchor:middle;pointer-events:none}
+.mc .mc-marble{pointer-events:none}
 .hidden{display:none}
 </style></head>
 <body>
