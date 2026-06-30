@@ -44,10 +44,14 @@ test("renders a card per member in manifest order, missing one stale (AE1/AE3/R5
   expect(ghost.querySelector(".stale")).toBeTruthy()
 })
 
-test("a loaded card links to its full chart view (R9)", () => {
+test("a loaded card links to its full chart view with a PROXY-SAFE relative href (R9)", () => {
   mount()
   const html = card(VIEW.members[1]) // alpha
-  expect(html).toContain('href="/ui/charts/alpha"')
+  // Must be relative (../charts/), NOT root-relative (/ui/charts/): a root-relative
+  // href escapes Tinstar's widget proxy and lands on the Tinstar origin, whose SPA
+  // fallback boots the Tinstar canvas instead of the chart.
+  expect(html).toContain('href="../charts/alpha"')
+  expect(html).not.toContain('href="/ui/charts/')
 })
 
 test("status badges reflect counts (AE2/R7)", () => {
@@ -77,8 +81,10 @@ test("canvas toggle tiles loaded members only and hides the index (R11/R12/R13)"
   const tiles = [...doc.querySelectorAll("#tiles > .tile")]
   expect(tiles).toHaveLength(3) // ghost (missing) omitted from the canvas
   expect(tiles.map((t: any) => t.querySelector(".th").textContent)).toEqual(["charlie", "alpha", "bravo"])
-  // Each tile embeds the per-chart page, which self-animates via its own /state.
-  expect((tiles[1] as any).querySelector("iframe").getAttribute("src")).toBe("/ui/charts/alpha")
+  // Each tile embeds the per-chart page via a PROXY-SAFE relative src — a
+  // root-relative /ui/charts/ would escape Tinstar's proxy and boot the Tinstar
+  // canvas SPA in every tile (N tiles = N nested Tinstars).
+  expect((tiles[1] as any).querySelector("iframe").getAttribute("src")).toBe("../charts/alpha")
   // Index hidden, canvas shown.
   expect((doc.getElementById("cards") as any).classList.contains("hidden")).toBe(true)
   expect((doc.getElementById("tiles") as any).classList.contains("hidden")).toBe(false)
@@ -93,6 +99,20 @@ test("opening the canvas before the first poll leaves it empty until data arrive
   // canvasOpen && !tilesBuilt guard).
   renderTiles(VIEW)
   expect(doc.querySelectorAll("#tiles iframe")).toHaveLength(3)
+})
+
+test("canvas tiles never use a root-relative /ui/ src (Tinstar-proxy regression)", () => {
+  const doc = mount()
+  renderIndex(VIEW)
+  setCanvas(true, VIEW)
+  const srcs = [...doc.querySelectorAll("#tiles iframe")].map((f: any) => f.getAttribute("src"))
+  expect(srcs.length).toBeGreaterThan(0)
+  // Root-relative srcs escape Tinstar's widget proxy onto the Tinstar origin,
+  // whose SPA fallback boots the canvas app — the bug that spun up N Tinstars.
+  for (const s of srcs) {
+    expect(s.startsWith("/")).toBe(false)
+    expect(s.startsWith("../charts/")).toBe(true)
+  }
 })
 
 test("closing the canvas tears down iframes so their polls don't leak", () => {

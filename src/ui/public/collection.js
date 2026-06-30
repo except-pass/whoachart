@@ -31,10 +31,16 @@ export function badges(m) {
 
 // One member card. A loaded member links to its full chart view (R9); a missing
 // member renders a non-clickable stale card (R8) rather than being dropped.
+// RELATIVE href (../charts/, not /ui/charts/): this page is served BOTH directly
+// and inside Tinstar's widget proxy. A root-relative URL escapes the proxy and
+// resolves against the Tinstar origin — whose SPA fallback serves the Tinstar
+// canvas app for any unknown path — so a card click would boot a whole Tinstar.
+// From /ui/collections/:name, ../charts/:name resolves to /ui/charts/:name when
+// direct and stays under the proxy when embedded (same rule as the ../app.js src).
 export function card(m) {
   const inner = `<div class="cn">${escHtml(m.name)}</div>${badges(m)}`
   if (m.missing) return `<div class="card missing">${inner}</div>`
-  return `<a class="card" href="/ui/charts/${encodeURIComponent(m.name)}">${inner}</a>`
+  return `<a class="card" href="../charts/${encodeURIComponent(m.name)}">${inner}</a>`
 }
 
 export function renderIndex(view) {
@@ -56,10 +62,17 @@ export function renderIndex(view) {
 // on each open so it reflects current membership rather than a one-shot snapshot.
 export function renderTiles(view) {
   const loaded = view.members.filter((m) => !m.missing)
+  // RELATIVE iframe src (../charts/, not /ui/charts/) — CRITICAL under Tinstar.
+  // Tinstar serves this page through its widget proxy on the Tinstar ORIGIN. A
+  // root-relative /ui/charts/:name escapes the proxy to that origin, whose SPA
+  // fallback returns the Tinstar canvas app for ANY unknown path — so each tile
+  // would boot a full nested Tinstar canvas (N tiles = N Tinstars = browser meltdown),
+  // not the whoachart chart. The relative path resolves to the chart when served
+  // direct and stays inside the proxy when embedded (same rule as the ../app.js src).
   $("tiles").innerHTML = loaded
     .map(
       (m) => `<div class="tile"><div class="th">${escHtml(m.name)}</div>` +
-        `<iframe src="/ui/charts/${encodeURIComponent(m.name)}" title="${escHtml(m.name)}"></iframe></div>`,
+        `<iframe src="../charts/${encodeURIComponent(m.name)}" title="${escHtml(m.name)}"></iframe></div>`,
     )
     .join("")
   tilesBuilt = true

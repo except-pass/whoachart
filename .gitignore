@@ -22,6 +22,8 @@ node_modules/
 
 # Local chart sources (machine-specific symlinks, e.g. charts/srena -> SREna repo)
 charts/
+# Local collection manifests (machine-specific symlinks, e.g. collections/srena -> SREna repo)
+collections/
 # roborev snapshots
 /.roborev/
 
