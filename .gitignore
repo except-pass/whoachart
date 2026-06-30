@@ -21,9 +21,10 @@ node_modules/
 *.tmp
 
 # Local chart sources (machine-specific symlinks, e.g. charts/srena -> SREna repo)
-charts/
+# Anchored to the repo root so a nested charts/ (e.g. tinstar-plugin/charts/) stays tracked.
+/charts/
 # Local collection manifests (machine-specific symlinks, e.g. collections/srena -> SREna repo)
-collections/
+/collections/
 # roborev snapshots
 /.roborev/
 
