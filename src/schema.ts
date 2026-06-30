@@ -63,12 +63,30 @@ const supervisorSchema = z.object({
   project: z.string().optional(),
 })
 
+const hookSchema = z
+  .object({
+    on: z.enum(["start", "enter", "leave", "traverse", "blocked", "failed", "end"]),
+    node: z.string().optional(),
+    edge: z.string().optional(),
+    run: z.string().min(1, "hook run command must be non-empty"),
+    timeout: z.number().int().positive().optional(),
+  })
+  .superRefine((h, ctx) => {
+    // `edge` scopes only edge traversals; using it elsewhere is almost certainly a
+    // mistake, so reject it structurally. Whether `node`/`edge` name a real
+    // node/edge is left to lintChart (advisory) so a typo never rejects the chart.
+    if (h.edge !== undefined && h.on !== "traverse") {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `hook edge matcher is only valid with on: traverse (got on: ${h.on})` })
+    }
+  })
+
 const chartSchema = z.object({
   name: z.string(),
   nodes: z.array(nodeSchema).min(1),
   edges: z.array(edgeSchema).default([]),
   triggers: z.array(triggerSchema).optional(),
   supervisor: supervisorSchema.optional(),
+  hooks: z.array(hookSchema).optional(),
 })
 
 export function parseChart(yamlText: string): Chart {

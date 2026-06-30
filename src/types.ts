@@ -78,12 +78,30 @@ export interface SupervisorSpec {
   project?: string
 }
 
+// Lifecycle events a hook can subscribe to. All seven are points the engine
+// already reaches in step(); `start` is a derived "first enter" and `leave` has
+// no EngineEvent of its own (see engine.fireHooks).
+export type HookEvent = "start" | "enter" | "leave" | "traverse" | "blocked" | "failed" | "end"
+
+// One chart-level hook: an arbitrary shell command run as a pure side-effect when
+// `on` fires. Observational only — its exit code never changes a marble's path.
+// `node` scopes node-events (and `start`) to one node id; `edge` scopes `traverse`
+// to one edge name; omit either to match all. `timeout` (ms) bounds the run.
+export interface ChartHook {
+  on: HookEvent
+  node?: string
+  edge?: string
+  run: string
+  timeout?: number
+}
+
 export interface Chart {
   name: string
   nodes: ChartNode[]
   edges: ChartEdge[]
   triggers?: ChartTrigger[]
   supervisor?: SupervisorSpec
+  hooks?: ChartHook[]
 }
 
 export type MarbleStatus = "queued" | "running" | "blocked" | "done" | "failed"
@@ -100,6 +118,11 @@ export interface Marble {
   error?: string
   createdAt: string
   updatedAt: string
+  // True once the marble's `start` hook has fired. `history` length is NOT a
+  // reliable "first entry" signal — it is only pushed on a successful traverse, so
+  // a marble that blocks or fails at its FIRST node and then re-enters (signal /
+  // retry) still has length 1. This persisted flag makes `start` fire exactly once.
+  started?: boolean
 }
 
 export interface NodeResult {

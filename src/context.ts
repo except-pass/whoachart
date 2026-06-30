@@ -2,7 +2,23 @@
 import { writeFile, unlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { Marble, ChartNode, ActivityStream } from "./types"
+import type { Marble, ChartNode, ActivityStream, HookEvent } from "./types"
+
+// Default ceiling for a hook command (ms). Bounds the fire-and-forget run so a
+// hung hook can't leak a process or stall engine drain; a per-hook `timeout`
+// overrides it.
+export const DEFAULT_HOOK_TIMEOUT_MS = 30_000
+// After SIGTERM on overrun, wait this long before escalating to SIGKILL — a
+// well-behaved hook gets a chance to clean up; a trap/ignore-TERM hook is forced.
+const HOOK_KILL_GRACE_MS = 2_000
+// Once the shell has exited, give the pipes only this long to flush before we
+// stop waiting — a detached grandchild holding the fd must never hang the caller.
+const HOOK_PUMP_GRACE_MS = 500
+
+const unref = (t: ReturnType<typeof setTimeout>) => {
+  ;(t as unknown as { unref?: () => void }).unref?.()
+}
+const delay = (ms: number) => new Promise<void>((res) => unref(setTimeout(res, ms)))
 
 export interface ActivityOutput {
   exitCode: number
@@ -118,6 +134,116 @@ export async function runShell(
       return { exitCode, stdout, stderr, next, merge }
     } finally {
       signal?.removeEventListener("abort", onAbort)
+    }
+  } finally {
+    await unlink(ctxPath).catch(() => {})
+  }
+}
+
+export interface HookFire {
+  script: string
+  event: HookEvent
+  chart: string
+  marble: Marble
+  node: ChartNode
+  // Present for `traverse` only — the edge being taken.
+  edge?: { name?: string; from: string; to: string }
+  // Present for `end` only — the marble's terminal outcome.
+  outcome?: string
+  timeoutMs: number
+  onLine?: (stream: ActivityStream, line: string) => void
+}
+
+export interface HookOutput {
+  exitCode: number
+  timedOut: boolean
+}
+
+// Run one chart-level lifecycle hook as a pure side-effect. The command receives
+// the marble context two ways: env vars (the WHOACHART_* set, plus event-specific
+// WHOACHART_EVENT/CHART/EDGE/FROM/TO/OUTCOME) and a JSON event object on STDIN
+// (the Claude Code parallel). Killed if it runs past `timeoutMs`.
+//
+// SEPARATE from runShell on purpose: it adds stdin + event env without changing
+// runShell's signature (which several node types call), and it writes a UNIQUE
+// temp context file per invocation — two hooks firing for the same (marble,node),
+// e.g. `enter` + `start` on the start node, would otherwise race on runShell's
+// shared whoachart-ctx-<marble>-<node>.json path (read vs. unlink).
+//
+// SECURITY: like runShell, hook stdout/stderr is forwarded VERBATIM to onLine and
+// is NOT content-redacted — safe only on the current loopback + Tailscale trust
+// surface (see runShell's note and netGuard).
+export async function runHookCommand(fire: HookFire): Promise<HookOutput> {
+  const { script, event, chart, marble, node, edge, outcome, timeoutMs, onLine } = fire
+  const ctxPath = join(tmpdir(), `whoachart-hook-${marble.id}-${node.id}-${crypto.randomUUID().slice(0, 8)}.json`)
+  await writeFile(ctxPath, JSON.stringify(marble.context))
+
+  const env: Record<string, string> = {
+    ...buildEnv(marble, node, ctxPath),
+    WHOACHART_EVENT: event,
+    WHOACHART_CHART: chart,
+  }
+  if (edge) {
+    if (edge.name) env.WHOACHART_EDGE = edge.name
+    env.WHOACHART_FROM = edge.from
+    env.WHOACHART_TO = edge.to
+  }
+  if (outcome !== undefined) env.WHOACHART_OUTCOME = outcome
+
+  const payload = {
+    event,
+    chart,
+    marble: { id: marble.id, status: marble.status, context: marble.context, workpiece: marble.workpiece },
+    node: { id: node.id, type: node.type, name: node.name },
+    ...(edge ? { edge } : {}),
+    ...(outcome !== undefined ? { outcome } : {}),
+  }
+
+  try {
+    const proc = Bun.spawn(["bash", "-c", script], {
+      env,
+      stdin: new TextEncoder().encode(JSON.stringify(payload)),
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    let timedOut = false
+    // On overrun: SIGTERM the shell, then escalate to SIGKILL after a grace so a
+    // hook that traps or ignores TERM still can't outlive its ceiling.
+    let killTimer: ReturnType<typeof setTimeout> | undefined
+    const termTimer = setTimeout(() => {
+      timedOut = true
+      proc.kill() // SIGTERM
+      killTimer = setTimeout(() => {
+        try {
+          proc.kill("SIGKILL")
+        } catch {
+          /* already exited */
+        }
+      }, HOOK_KILL_GRACE_MS)
+      unref(killTimer)
+    }, timeoutMs)
+    unref(termTimer)
+
+    // Drain both pipes, but key completion on the SHELL exiting — NOT on the pipes
+    // closing. A pipeline or backgrounded hook (`curl | jq`, `sleep 9 &`) leaves a
+    // grandchild holding the stdout write-fd after the shell dies; pumpStream would
+    // then never see EOF and would hang this call — and any drain() awaiting it —
+    // far past the timeout, the exact wedge the ceiling exists to prevent. So we
+    // await proc.exited (bounded by the SIGKILL escalation above) and give the
+    // pumps only a brief post-exit grace to flush. The pump promise is
+    // .catch-guarded because it may outlive us reading an orphaned pipe.
+    const pumps = Promise.all([
+      pumpStream(proc.stdout, "stdout", onLine),
+      pumpStream(proc.stderr, "stderr", onLine),
+    ])
+    pumps.catch(() => {})
+    try {
+      const exitCode = await proc.exited
+      await Promise.race([pumps, delay(HOOK_PUMP_GRACE_MS)])
+      return { exitCode, timedOut }
+    } finally {
+      clearTimeout(termTimer)
+      if (killTimer) clearTimeout(killTimer)
     }
   } finally {
     await unlink(ctxPath).catch(() => {})

@@ -1,0 +1,47 @@
+# examples/hooks-demo.yaml
+#
+# Demonstrates chart-level lifecycle hooks. Each hook is an arbitrary shell
+# command that fires on an event and appends a line to /tmp/whoachart-hooks.log
+# (harmless side effects so the demo is safe to run). Hooks are OBSERVATIONAL:
+# their exit code never changes where a marble goes.
+#
+#   start    — fires once when a marble enters the chart
+#   enter    — scoped with `node:` to fire only at the review gate
+#   traverse — scoped with `edge:` to fire only when the marble is rejected
+#   end      — fires on completion; WHOACHART_OUTCOME is success|fail|warning
+#
+# Tail the log while you drop marbles through the chart:
+#   tail -f /tmp/whoachart-hooks.log
+name: hooks-demo
+hooks:
+  - on: start
+    run: 'echo "[$WHOACHART_CHART] start marble=$WHOACHART_MARBLE" >> /tmp/whoachart-hooks.log'
+  - on: enter
+    node: review
+    run: 'echo "[$WHOACHART_CHART] entered review (marble=$WHOACHART_MARBLE)" >> /tmp/whoachart-hooks.log'
+  - on: traverse
+    edge: rejected
+    run: 'echo "[$WHOACHART_CHART] REJECTED $WHOACHART_FROM->$WHOACHART_TO" >> /tmp/whoachart-hooks.log'
+  - on: end
+    run: 'echo "[$WHOACHART_CHART] end outcome=$WHOACHART_OUTCOME" >> /tmp/whoachart-hooks.log'
+nodes:
+  - id: ingest
+    type: source
+    config:
+      trigger: api
+      form:
+        - { key: title, type: text, required: true }
+  - id: review
+    type: human
+    name: Review
+    config: {}
+  - id: approved
+    type: end
+    config: { outcome: success }
+  - id: rejected
+    type: end
+    config: { outcome: fail }
+edges:
+  - { from: ingest, to: review }
+  - { from: review, to: approved, name: approved }
+  - { from: review, to: rejected, name: rejected }

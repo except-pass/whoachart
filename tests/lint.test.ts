@@ -135,3 +135,40 @@ test("a decision with one outgoing edge raises no false dead-end/decision warnin
   expect(codeset).not.toContain("decision-no-outgoing")
   expect(codeset).not.toContain("dead-end")
 })
+
+test("a hook matcher naming an unknown node warns (hook-unknown-node)", () => {
+  const c: Chart = {
+    name: "t",
+    nodes: [node("s", "source"), node("done", "end")],
+    edges: [{ from: "s", to: "done", name: "go" }],
+    hooks: [{ on: "enter", node: "ghost", run: "echo x" }],
+  }
+  const found = lintChart(c).warnings.filter((w) => w.code === "hook-unknown-node")
+  expect(found).toHaveLength(1)
+  expect(found[0].node).toBe("ghost")
+})
+
+test("a traverse hook naming an unknown edge warns (hook-unknown-edge)", () => {
+  const c: Chart = {
+    name: "t",
+    nodes: [node("s", "source"), node("done", "end")],
+    edges: [{ from: "s", to: "done", name: "go" }],
+    hooks: [{ on: "traverse", edge: "nope", run: "echo x" }],
+  }
+  expect(codes(c)).toContain("hook-unknown-edge")
+})
+
+test("hooks with resolving matchers (or none) raise no hook warnings", () => {
+  const c: Chart = {
+    name: "t",
+    nodes: [node("s", "source"), node("done", "end")],
+    edges: [{ from: "s", to: "done", name: "go" }],
+    hooks: [
+      { on: "start", run: "echo a" },
+      { on: "enter", node: "done", run: "echo b" },
+      { on: "traverse", edge: "go", run: "echo c" },
+    ],
+  }
+  const hookCodes = lintChart(c).warnings.map((w) => w.code).filter((x) => x.startsWith("hook-"))
+  expect(hookCodes).toEqual([])
+})

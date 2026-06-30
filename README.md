@@ -215,6 +215,54 @@ nodes:
 
 ---
 
+## Hooks
+
+Hooks are whoachart's take on [Claude Code's hooks](https://docs.anthropic.com/en/docs/claude-code/hooks):
+a top-level block that runs **arbitrary shell commands** when a marble crosses a
+lifecycle event. They are **observational** — a hook's exit code never changes
+where a marble goes; it just fires, logs, and gets out of the way.
+
+```yaml
+hooks:
+  - on: start                 # a marble entered the chart
+    run: 'echo "started $WHOACHART_MARBLE" >> /tmp/runs.log'
+  - on: enter
+    node: review              # only when entering the `review` node (omit = any node)
+    run: './notify-reviewer.sh'
+  - on: traverse
+    edge: rejected            # only when an edge named `rejected` is taken
+    run: './page-oncall.sh'
+  - on: end
+    run: './record.sh'        # WHOACHART_OUTCOME is success|fail|warning
+    timeout: 5000             # ms; the hook is killed if it overruns (default 30s)
+```
+
+**Events** — `start` (marble enters the chart), `enter` / `leave` (a node), `traverse`
+(an edge), `blocked` (a marble waits at a gate), `failed` (a step errors or
+mis-routes), `end` (a marble finishes).
+
+**Matchers** — `node:` scopes a node event (and `start`) to one node id; `edge:`
+scopes `traverse` to one edge name. Omit a matcher to fire for all. A matcher that
+names nothing in the chart is surfaced as a lint warning, not an error.
+
+**Payload** — every hook command receives the marble context two ways:
+
+| | |
+|---|---|
+| **Env vars** | `WHOACHART_EVENT`, `WHOACHART_CHART`, `WHOACHART_MARBLE`, `WHOACHART_NODE`, `WHOACHART_CONTEXT` (path to a JSON file of the context), `WHOACHART_WORKSPACE`; plus `WHOACHART_EDGE`/`WHOACHART_FROM`/`WHOACHART_TO` on `traverse` and `WHOACHART_OUTCOME` on `end`. |
+| **JSON on stdin** | `{ event, chart, marble: { id, status, context, workpiece }, node: { id, type, name }, edge?, outcome? }` — pipe it to `jq`. |
+
+Hooks fire **fire-and-forget** (a slow hook never delays the marble) and are bounded
+by `timeout`. Their stdout/stderr streams into the node inspector. They are
+**per-chart only**, and run on the same loopback + Tailscale trust surface as the
+rest of whoachart, so their commands are never exposed through `/def`.
+
+> The per-node `on_leave` and per-edge `on_traversal` fields are inline shortcuts
+> that predate this block and still work; `hooks:` is the general, matcher-based
+> superset.
+
+---
+
 ## <a id="better-with-tinstar"></a>✨ Better with Tinstar
 
 whoachart runs fine on its own in the browser — but it really shines next to **Tinstar**, the multi-agent dashboard.
@@ -247,6 +295,7 @@ Runnable charts in [`examples/`](examples):
 | `jira-morning.yaml` | Morning Jira triage → draft → approve → post |
 | `plus-one-burndown.yaml` | A burndown-style flow |
 | `automation-demo.yaml` | Cron + interval + webhook triggers, a supervisor, and an agent-decided gate |
+| `hooks-demo.yaml` | Lifecycle hooks: `start`, a node-scoped `enter`, an edge-scoped `traverse`, and `end` |
 
 ---
 

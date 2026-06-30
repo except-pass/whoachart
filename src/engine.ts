@@ -1,6 +1,6 @@
-import type { ActivityStream, Chart, ChartEdge, ChartNode, Marble, NodeResult, RunCtx } from "./types"
+import type { ActivityStream, Chart, ChartEdge, ChartNode, HookEvent, Marble, NodeResult, RunCtx } from "./types"
 import { getNodeType, type NodeType } from "./registry"
-import { runShell } from "./context"
+import { runShell, runHookCommand, DEFAULT_HOOK_TIMEOUT_MS } from "./context"
 import { MarbleStore } from "./store"
 import { genId, now } from "./util"
 
@@ -71,6 +71,9 @@ export class Engine {
   private queue: Marble[] = []
   private inFlight = new Set<string>()
   private pendingSignals = new Map<string, NodeResult>()
+  // In-flight chart-level hook runs. Hooks are fire-and-forget (never block a
+  // marble step), but tracked so drain() can settle them for tests/shutdown.
+  private outstandingHooks = new Set<Promise<void>>()
   // Set by stop() to quiesce the engine for a hot-reload: pump() stops launching
   // new steps so currently-running steps can settle before the chart is swapped.
   // resume() clears it again (a stopped engine that is re-resumed comes back).
@@ -87,6 +90,13 @@ export class Engine {
     const n = this.opts.chart.nodes.find((n) => n.id === id)
     if (!n) throw new Error(`unknown node: ${id}`)
     return n
+  }
+
+  // Like node(), but never throws — used on failure paths (cycle guard, the step
+  // catch) where the marble may sit at an unknown id and we still want to fire the
+  // `failed` hook rather than swallow it.
+  private nodeOrStub(id: string): ChartNode {
+    return this.opts.chart.nodes.find((n) => n.id === id) ?? ({ id, type: "unknown", config: {} } as ChartNode)
   }
 
   private nodeType(type: string): NodeType {
@@ -185,10 +195,80 @@ export class Engine {
 
   drain(): Promise<void> {
     return new Promise((resolve) => {
-      const check = () =>
-        this.running === 0 && this.queue.length === 0 ? resolve() : setTimeout(check, 5)
+      const check = () => {
+        if (this.running === 0 && this.queue.length === 0) {
+          // All marble work has settled; no further steps can fire a new hook, so
+          // the outstanding set only shrinks from here. Await the snapshot.
+          void Promise.allSettled([...this.outstandingHooks]).then(() => resolve())
+        } else {
+          setTimeout(check, 5)
+        }
+      }
       check()
     })
+  }
+
+  // Dispatch chart-level lifecycle hooks matching `event` (scoped by node/edge).
+  // OBSERVATIONAL ONLY: the returned promises are tracked but never awaited in the
+  // marble's critical path, and a hook's exit code/output never changes routing.
+  // The marble is SNAPSHOT at fire time — dispatch is async, so the live marble
+  // may advance (status/context/node) before the hook serializes it.
+  private fireHooks(
+    event: HookEvent,
+    m: Marble,
+    node: ChartNode,
+    extra?: { edge?: { name?: string; from: string; to: string }; outcome?: string },
+  ): void {
+    const hooks = this.opts.chart.hooks
+    if (!hooks?.length) return
+    const matching = hooks.filter(
+      (h) =>
+        h.on === event &&
+        (h.node === undefined || h.node === node.id) &&
+        (h.edge === undefined || h.edge === extra?.edge?.name),
+    )
+    if (!matching.length) return
+
+    // Dispatch must never throw back into step(): one call site is step()'s own
+    // catch block, and structuredClone() rejects a non-cloneable marble.context
+    // (a node could merge a function/symbol via result.merge). A throw here would
+    // strand the marble (unpersisted, stuck in inFlight) for a purely observational
+    // side-effect. Swallow + log instead — hooks never affect the marble.
+    let snap: Marble
+    try {
+      snap = structuredClone(m)
+    } catch (err) {
+      console.error(`[whoachart] hook on:${event} (chart ${this.opts.chart.name}, marble ${m.id}) skipped — context not cloneable: ${err}`)
+      return
+    }
+    const onLine = this.logFor(m, node)
+    const chart = this.opts.chart.name
+    for (const h of matching) {
+      const run = runHookCommand({
+        script: h.run,
+        event,
+        chart,
+        marble: snap,
+        node,
+        edge: extra?.edge,
+        outcome: extra?.outcome,
+        timeoutMs: h.timeout ?? DEFAULT_HOOK_TIMEOUT_MS,
+        onLine,
+      })
+        .then((out) => {
+          if (out.exitCode !== 0) {
+            console.error(
+              `[whoachart] hook on:${event} (chart ${chart}, node ${node.id}, marble ${m.id}) ` +
+                `${out.timedOut ? "timed out" : `exited ${out.exitCode}`}`,
+            )
+          }
+        })
+        .catch((err) => {
+          console.error(`[whoachart] hook on:${event} (chart ${chart}, node ${node.id}, marble ${m.id}) threw: ${err}`)
+        })
+      this.outstandingHooks.add(run)
+      void run.finally(() => this.outstandingHooks.delete(run))
+    }
   }
 
   // Enqueue a FRESH marble (submit/resume). Skips if one with the same id is
@@ -280,6 +360,16 @@ export class Engine {
       m.status = "running"
       this.emit({ type: "enter", marble: m.id, node: node.id })
       await this.persist(m)
+      this.fireHooks("enter", m, node)
+      // `start` is the marble's very first entry, fired exactly once. Gated on a
+      // persisted flag (set + persisted below) rather than history.length===1,
+      // which is NOT once-only: history is pushed only on a successful traverse, so
+      // a marble that blocks/fails at its first node and re-enters (signal/retry)
+      // still has length 1 and would otherwise re-fire `start`.
+      if (!m.started) {
+        m.started = true
+        this.fireHooks("start", m, node)
+      }
 
       const pending = this.pendingSignals.get(m.id)
       let result: NodeResult
@@ -295,8 +385,10 @@ export class Engine {
       if (result.end || node.type === "end") {
         m.context._outcome = result.endOutcome ?? "success" // _outcome is reserved
         m.status = result.endOutcome === "fail" ? "failed" : "done"
-        this.emit({ type: "end", marble: m.id, node: node.id, outcome: result.endOutcome ?? "success" })
+        const outcome = result.endOutcome ?? "success"
+        this.emit({ type: "end", marble: m.id, node: node.id, outcome })
         await this.persist(m)
+        this.fireHooks("end", m, node, { outcome })
         this.inFlight.delete(m.id)
         return
       }
@@ -305,6 +397,7 @@ export class Engine {
         m.status = "blocked"
         this.emit({ type: "blocked", marble: m.id, node: node.id })
         await this.persist(m)
+        this.fireHooks("blocked", m, node)
         this.inFlight.delete(m.id)
         return
       }
@@ -315,12 +408,20 @@ export class Engine {
         m.error = `no matching edge from ${node.id} (next=${result.next ?? "-"})`
         this.emit({ type: "failed", marble: m.id, node: node.id, error: m.error })
         await this.persist(m)
+        this.fireHooks("failed", m, node)
         this.inFlight.delete(m.id)
         return
       }
 
       if (node.on_leave) await this.runHook(node.on_leave, m, node)
+      this.fireHooks("leave", m, node)
       if (edge.on_traversal) await this.runHook(edge.on_traversal, m, node)
+      // Fires BEFORE m.node advances (below), so the hook's marble snapshot sits at
+      // the source node — same timing as on_traversal — while `edge.to` carries the
+      // destination. Don't "fix" this to match the emit-after ordering of other
+      // events: that would put the snapshot at the wrong node. (emit traverse fires
+      // after the move, for the event stream; the hook intentionally precedes it.)
+      this.fireHooks("traverse", m, node, { edge: { name: edge.name, from: node.id, to: edge.to } })
 
       const leftAt = now()
       const trail = (m.trail ??= [])
@@ -340,6 +441,7 @@ export class Engine {
         m.error = "max steps exceeded (cycle guard)"
         this.emit({ type: "failed", marble: m.id, node: m.node, error: m.error })
         await this.persist(m)
+        this.fireHooks("failed", m, this.nodeOrStub(m.node))
         this.inFlight.delete(m.id)
         return
       }
@@ -352,6 +454,7 @@ export class Engine {
       m.status = "failed"
       m.error = err instanceof Error ? (err.stack ?? err.message) : String(err)
       this.emit({ type: "failed", marble: m.id, node: m.node, error: m.error })
+      this.fireHooks("failed", m, this.nodeOrStub(m.node))
       try {
         await this.persist(m)
       } catch (persistErr) {
