@@ -63,6 +63,25 @@ test("marble ring color reflects status (failed = red)", () => {
   expect(m.getAttribute("stroke")).toBe("#ef4444")
 })
 
+test("node stroke resolves color: explicit n.color > TYPE_COLOR map > fallback", () => {
+  const s = svg()
+  renderMiniChart(s, {
+    nodes: [
+      { id: "a", type: "source" }, // TYPE_COLOR.source
+      { id: "b", type: "weirdtype" }, // unmapped -> fallback #2a3340
+      { id: "c", type: "end", color: "#ff00ff" }, // explicit override wins
+    ],
+    edges: [],
+    layout: { width: 200, height: 200, boxes: {
+      a: { x: 0, y: 0, w: 80, h: 40 }, b: { x: 0, y: 60, w: 80, h: 40 }, c: { x: 0, y: 120, w: 80, h: 40 },
+    } },
+  } as any, { live: [] })
+  const shapes = [...s.querySelectorAll(".mc-nodes .node")] as any[]
+  expect(shapes[0].getAttribute("stroke")).toBe("#3a5566") // TYPE_COLOR.source
+  expect(shapes[1].getAttribute("stroke")).toBe("#2a3340") // fallback
+  expect(shapes[2].getAttribute("stroke")).toBe("#ff00ff") // explicit override
+})
+
 test("a marble on an unknown node is skipped, not an error", () => {
   const s = svg()
   expect(() => renderMiniChart(s, DEF, { live: [{ id: "g", node: "ghost", status: "running" }] })).not.toThrow()

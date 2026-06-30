@@ -20,3 +20,4 @@ export function renderIndex(view: CollectionView): void
 export function buildCells(view: CollectionView): void
 export function refreshCells(): Promise<void>
 export function setCanvas(open: boolean, view?: CollectionView | null): void
+export function __resetCanvasState(): void

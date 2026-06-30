@@ -11,6 +11,11 @@ import { renderMiniChart } from "./miniChart.js"
 const NAME = globalThis.WHOACHART?.collection
 const $ = (id) => document.getElementById(id)
 const POLL_MS = 600 // matches the per-chart page so liveness feels uniform
+// A hung member fetch must NOT stall the shared poll loop (it awaits Promise.all
+// over all members) — bound every fetch so a stuck member aborts and the loop
+// keeps refreshing the rest. Restores the per-member isolation the old iframe
+// tiles had (each self-polled).
+const FETCH_TIMEOUT_MS = 5000
 const SVGNS = "http://www.w3.org/2000/svg"
 
 let canvasOpen = false // index is the default surface (R13); canvas is opt-in
@@ -68,6 +73,10 @@ export function buildCells(view) {
   const tiles = $("tiles")
   tiles.innerHTML = ""
   cellSvgs.clear()
+  // Drop cached defs for members no longer present, so the cache can't grow
+  // unbounded over a long-lived page or keep a removed member's stale topology.
+  const present = new Set(view.members.filter((x) => !x.missing).map((m) => m.name))
+  for (const k of [...defCache.keys()]) if (!present.has(k)) defCache.delete(k)
   for (const m of view.members.filter((x) => !x.missing)) {
     const cell = document.createElement("div")
     cell.className = "cell"
@@ -91,14 +100,26 @@ export async function refreshCells() {
   await Promise.all(
     [...cellSvgs.entries()].map(async ([name, svg]) => {
       try {
+        // Every fetch is timeout-bounded: a hung member aborts (throws into the
+        // catch below, skipping just that member this tick) instead of leaving
+        // Promise.all — and the whole poll loop — pending forever.
         if (!defCache.has(name)) {
-          const dr = await fetch(`/api/charts/${encodeURIComponent(name)}/def`, { cache: "no-store" })
+          const dr = await fetch(`/api/charts/${encodeURIComponent(name)}/def`, { cache: "no-store", signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
           if (!dr.ok) return
           defCache.set(name, await dr.json())
         }
-        const sr = await fetch(`/api/charts/${encodeURIComponent(name)}/state`, { cache: "no-store" })
+        const sr = await fetch(`/api/charts/${encodeURIComponent(name)}/state`, { cache: "no-store", signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
         if (!sr.ok) return
-        renderMiniChart(svg, defCache.get(name), await sr.json())
+        const state = await sr.json()
+        const def = defCache.get(name)
+        // Self-heal a stale cached def after a topology hot-reload: if a live
+        // marble sits on a node the cached layout doesn't know, the topology
+        // changed under us — evict so the next tick re-fetches /def. Without this
+        // the canvas would draw the obsolete graph and SILENTLY DROP marbles on
+        // new nodes (renderMiniChart skips a marble whose box is missing).
+        const boxes = def?.layout?.boxes ?? {}
+        if ((state.live ?? []).some((m) => !boxes[m.node])) defCache.delete(name)
+        renderMiniChart(svg, def, state)
       } catch (e) {
         console.error(`collection cell ${name} failed`, e)
       }
@@ -125,10 +146,23 @@ export function setCanvas(open, view) {
     // Build cell scaffolding from the latest membership; the poll loop fills the
     // graphs. If the first poll hasn't landed yet (view null), tick() builds them
     // as soon as it does — so an early toggle no longer leaves the canvas blank.
-    if (view) buildCells(view)
+    if (view) {
+      buildCells(view)
+      void refreshCells() // draw immediately so the canvas isn't blank for up to POLL_MS
+    }
   } else {
     teardownCells()
   }
+}
+
+// Test-only: reset module-global canvas state between tests so the defCache /
+// cellSvgs / open-flags don't leak across cases (real pages get one lifetime).
+export function __resetCanvasState() {
+  canvasOpen = false
+  cellsBuilt = false
+  lastView = null
+  cellSvgs.clear()
+  defCache.clear()
 }
 
 async function tick() {

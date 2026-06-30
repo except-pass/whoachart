@@ -1,6 +1,18 @@
-import { test, expect } from "bun:test"
+import { test, expect, beforeEach, afterEach } from "bun:test"
 import { Window } from "happy-dom"
-import { badges, card, renderIndex, buildCells, refreshCells, setCanvas, type CollectionView } from "../src/ui/public/collection.js"
+import { badges, card, renderIndex, buildCells, refreshCells, setCanvas, __resetCanvasState, type CollectionView } from "../src/ui/public/collection.js"
+
+// Reset module-global canvas state between cases (defCache/cellSvgs/flags don't
+// leak across tests), and install a benign default fetch stub so setCanvas's
+// immediate refreshCells() never hits the real network. Tests that assert fetch
+// behavior override globalThis.fetch within their own body and restore it.
+let realFetch: typeof fetch
+beforeEach(() => {
+  __resetCanvasState()
+  realFetch = globalThis.fetch
+  ;(globalThis as any).fetch = async () => ({ ok: false, json: async () => ({}) })
+})
+afterEach(() => { globalThis.fetch = realFetch })
 
 // Mount a DOM scaffold mirroring the IDs renderCollectionPage emits (ctitle,
 // cdesc, cards, tiles, canvasToggle). collection.js reads globalThis.document at
@@ -165,4 +177,62 @@ test("a member's failed fetch is isolated — other cells still draw", async () 
   } finally {
     globalThis.fetch = realFetch
   }
+})
+
+const DEF1 = { nodes: [{ id: "n", type: "source" }], edges: [], layout: { width: 100, height: 60, boxes: { n: { x: 0, y: 0, w: 100, h: 60 } } } }
+
+test("a member's /def is fetched once and cached across ticks (one loop, cached topology)", async () => {
+  mount()
+  const calls: string[] = []
+  ;(globalThis as any).fetch = async (url: string) => {
+    calls.push(url)
+    return { ok: true, json: async () => (url.endsWith("/state") ? { live: [] } : DEF1) }
+  }
+  // Drive buildCells directly (not setCanvas, which would fire its own immediate
+  // refresh) so the tick count is exactly the two explicit refreshCells calls.
+  buildCells({ ...VIEW, members: [{ name: "alpha", missing: false }] })
+  await refreshCells()
+  await refreshCells() // second tick
+  // /def fetched exactly once for alpha; /state fetched each tick.
+  expect(calls.filter((u) => u === "/api/charts/alpha/def")).toHaveLength(1)
+  expect(calls.filter((u) => u === "/api/charts/alpha/state")).toHaveLength(2)
+})
+
+test("a topology hot-reload self-heals: a marble on an unknown node evicts the cached def and re-fetches", async () => {
+  mount()
+  const calls: string[] = []
+  ;(globalThis as any).fetch = async (url: string) => {
+    calls.push(url)
+    // /state puts a marble on node "added" — which DEF1's cached boxes don't know.
+    return { ok: true, json: async () => (url.endsWith("/state") ? { live: [{ id: "m", node: "added", status: "running" }] } : DEF1) }
+  }
+  buildCells({ ...VIEW, members: [{ name: "alpha", missing: false }] }) // direct: avoid setCanvas's auto-refresh
+  await refreshCells() // caches DEF1, sees marble on unknown node -> evicts cache
+  await refreshCells() // cache was evicted -> def re-fetched
+  expect(calls.filter((u) => u === "/api/charts/alpha/def").length).toBeGreaterThanOrEqual(2)
+})
+
+test("a member whose fetch REJECTS (not ok:false) is isolated — others still draw", async () => {
+  const doc = mount()
+  ;(globalThis as any).fetch = async (url: string) => {
+    if (url.startsWith("/api/charts/alpha/")) throw new Error("network down") // a genuine rejection
+    return { ok: true, json: async () => (url.endsWith("/state") ? { live: [] } : DEF1) }
+  }
+  setCanvas(true, VIEW)
+  await refreshCells() // must not reject despite alpha throwing
+  const charlie = [...doc.querySelectorAll("#tiles > .cell")].find((c: any) => c.querySelector(".ch a").textContent === "charlie") as any
+  expect(charlie.querySelector("svg.mc .node")).toBeTruthy()
+})
+
+test("opening the canvas fires an immediate refresh (no 600ms blank wait)", async () => {
+  mount()
+  let fetched = false
+  ;(globalThis as any).fetch = async (url: string) => {
+    fetched = true
+    return { ok: true, json: async () => (url.endsWith("/state") ? { live: [] } : DEF1) }
+  }
+  setCanvas(true, { ...VIEW, members: [{ name: "alpha", missing: false }] })
+  await Promise.resolve() // let the void refreshCells() microtask run
+  await new Promise((r) => setTimeout(r, 0))
+  expect(fetched).toBe(true)
 })

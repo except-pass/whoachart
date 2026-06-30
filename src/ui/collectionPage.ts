@@ -5,16 +5,16 @@ function esc(s: string): string {
 // Stable shell for a collection's view. Like renderPage (the per-chart shell),
 // this never reloads: collection.js draws everything from /api/collections/:name.
 // The default surface is the index (member cards); a toggle expands the combined
-// canvas (member chart graphs tiled live). Self-contained styling — the per-chart
-// page's giant stylesheet is for the node-graph, which this page embeds via tiles
-// rather than re-renders, so only card + tile chrome lives here.
+// canvas, which renders each member's node-graph INLINE via the shared mini-graph
+// renderer (miniChart.js) — no iframes, no nested apps. So this stylesheet carries
+// the card chrome plus the mc-* graph primitives that mirror the per-chart canvas.
 export function renderCollectionPage(name: string): string {
   return `<!DOCTYPE html>
 <html class="dark"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>whoachart — ${esc(name)}</title>
 <style>
-:root{--bg:#0a0e14;--panel:#0e141d;--card:#0d141c;--line:#1c2531;--ink:#c9d6e3;--dim:#5d6b7a;
+:root{--bg:#0a0e14;--panel:#0e141d;--card:#0d141c;--node:#0d141c;--line:#1c2531;--ink:#c9d6e3;--dim:#5d6b7a;
   --cyan:#00f0ff;--violet:#a78bfa;--amber:#f59e0b;--green:#3ad98a;--red:#ef4444}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:system-ui,sans-serif}
