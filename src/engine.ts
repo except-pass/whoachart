@@ -229,7 +229,18 @@ export class Engine {
     )
     if (!matching.length) return
 
-    const snap = structuredClone(m)
+    // Dispatch must never throw back into step(): one call site is step()'s own
+    // catch block, and structuredClone() rejects a non-cloneable marble.context
+    // (a node could merge a function/symbol via result.merge). A throw here would
+    // strand the marble (unpersisted, stuck in inFlight) for a purely observational
+    // side-effect. Swallow + log instead — hooks never affect the marble.
+    let snap: Marble
+    try {
+      snap = structuredClone(m)
+    } catch (err) {
+      console.error(`[whoachart] hook on:${event} (chart ${this.opts.chart.name}, marble ${m.id}) skipped — context not cloneable: ${err}`)
+      return
+    }
     const onLine = this.logFor(m, node)
     const chart = this.opts.chart.name
     for (const h of matching) {
@@ -350,9 +361,15 @@ export class Engine {
       this.emit({ type: "enter", marble: m.id, node: node.id })
       await this.persist(m)
       this.fireHooks("enter", m, node)
-      // `start` is the marble's very first entry — history only grows, so length 1
-      // happens exactly once and never re-fires on retry/signal re-entry.
-      if (m.history.length === 1) this.fireHooks("start", m, node)
+      // `start` is the marble's very first entry, fired exactly once. Gated on a
+      // persisted flag (set + persisted below) rather than history.length===1,
+      // which is NOT once-only: history is pushed only on a successful traverse, so
+      // a marble that blocks/fails at its first node and re-enters (signal/retry)
+      // still has length 1 and would otherwise re-fire `start`.
+      if (!m.started) {
+        m.started = true
+        this.fireHooks("start", m, node)
+      }
 
       const pending = this.pendingSignals.get(m.id)
       let result: NodeResult
@@ -399,6 +416,11 @@ export class Engine {
       if (node.on_leave) await this.runHook(node.on_leave, m, node)
       this.fireHooks("leave", m, node)
       if (edge.on_traversal) await this.runHook(edge.on_traversal, m, node)
+      // Fires BEFORE m.node advances (below), so the hook's marble snapshot sits at
+      // the source node — same timing as on_traversal — while `edge.to` carries the
+      // destination. Don't "fix" this to match the emit-after ordering of other
+      // events: that would put the snapshot at the wrong node. (emit traverse fires
+      // after the move, for the event stream; the hook intentionally precedes it.)
       this.fireHooks("traverse", m, node, { edge: { name: edge.name, from: node.id, to: edge.to } })
 
       const leftAt = now()

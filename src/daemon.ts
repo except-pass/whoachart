@@ -18,7 +18,7 @@ import { buildSupervisorBrief } from "./supervisor"
 import { validateForm } from "./forms"
 import type { CanvasControl, SessionLauncher, SpawnSessionOpts } from "./tinstar"
 import { SpawnSessionError } from "./tinstar"
-import type { Chart, ChartNode, ChartTrigger, FormField, Marble, PresentSpec } from "./types"
+import type { Chart, ChartNode, ChartTrigger, FormField, HookEvent, Marble, PresentSpec } from "./types"
 
 // One timestamped line per lifecycle event — the operator audit trail.
 function logLine(chart: string, msg: string): void {
@@ -153,7 +153,7 @@ export interface ChartDef {
   // Chart-level lifecycle hooks, surfaced as METADATA ONLY — the `run` command is
   // deliberately omitted (it can carry secrets, and /def is tailnet-reachable; same
   // trust surface that drives redactSecrets on node config).
-  hooks?: { on: string; node?: string; edge?: string; timeout?: number }[]
+  hooks?: { on: HookEvent; node?: string; edge?: string; timeout?: number }[]
   // Advisory static-analysis findings for the live chart, computed at request
   // time so a hot-reload (3a) re-lints. Separate top-level key — NOT folded into
   // nodes/edges — so the canvas (2b) and other /def consumers are undisturbed.

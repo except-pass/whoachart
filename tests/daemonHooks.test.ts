@@ -50,10 +50,12 @@ test("def exposes hook metadata (on/node/edge/timeout) without the run command",
     { on: "enter", node: "done", edge: undefined, timeout: 5000 },
     { on: "traverse", node: undefined, edge: "go", timeout: undefined },
   ])
-  // The secret-bearing run string must appear nowhere in the serialized def.
+  // No hook entry carries a `run` key (structural, not a fragile substring scan —
+  // a node id like "runner" or a chart named "drain" contains "run").
+  for (const h of def.hooks!) expect(Object.keys(h)).not.toContain("run")
+  // And the secret-bearing command values appear nowhere in the serialized def.
   const json = JSON.stringify(def)
   expect(json).not.toContain("sk-secret")
-  expect(json).not.toContain("run")
   expect(json).not.toContain("notify.sh")
 })
 

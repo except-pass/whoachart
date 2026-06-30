@@ -19,6 +19,7 @@ beforeEach(() => {
   registerNodeType({ type: "waiter", configSchema: z.object({}).passthrough(), run: async () => ({ block: true }) })
   registerNodeType({ type: "router", configSchema: z.object({}).passthrough(), run: async () => ({ next: "rejected" }) })
   registerNodeType({ type: "lost", configSchema: z.object({}).passthrough(), run: async () => ({ next: "nowhere" }) })
+  registerNodeType({ type: "boom", configSchema: z.object({}).passthrough(), run: async () => { throw new Error("boom") } })
 })
 
 function tmp(): string {
@@ -179,14 +180,16 @@ test("OBSERVATIONAL: a failing/garbage hook leaves the marble path identical", a
   expect(b?.context).toEqual(a?.context!)
 })
 
-test("NON-BLOCKING: a slow hook does not delay the marble reaching done", async () => {
+test("NON-BLOCKING: the marble reaches done well before a slow hook settles", async () => {
   const dir = tmp()
   const r = await run(linear([{ on: "start", run: `sleep 1; echo done >> ${join(dir, "slow")}` }]), "s")
-  // Marble completed near-instantly even though the start hook sleeps 1s.
+  const drainReturnedAtMs = Bun.nanoseconds() / 1e6
   expect(r.doneAtMs).toBeDefined()
-  // drain() (which DID wait for the hook) only returns after the sleep, so the
-  // file exists now — but the marble's own completion was recorded far earlier.
-  expect(existsSync(join(dir, "slow"))).toBe(true)
+  // drain() DID wait ~1s for the start hook; the marble itself completed ~1s
+  // earlier. A blocking dispatch would make these two timestamps near-equal, so a
+  // wide gap is the actual proof the marble was never delayed by the hook.
+  expect(drainReturnedAtMs - r.doneAtMs!).toBeGreaterThan(700)
+  expect(readFileSync(join(dir, "slow"), "utf8").trim()).toBe("done") // hook really ran
 })
 
 test("drain() awaits outstanding hooks (slow hook's output is present after drain)", async () => {
@@ -196,10 +199,111 @@ test("drain() awaits outstanding hooks (slow hook's output is present after drai
   expect(readFileSync(f, "utf8").trim()).toBe("settled")
 })
 
+test("a hook that overruns its timeout does not wedge drain() (pipeline grandchild)", async () => {
+  const t0 = Bun.nanoseconds()
+  // `sleep 9 | cat` leaves cat holding the stdout fd; without a bounded runner
+  // drain() would block ~9s. The 100ms timeout must cap it.
+  await run(linear([{ on: "start", run: "sleep 9 | cat", timeout: 100 }]), "s")
+  expect((Bun.nanoseconds() - t0) / 1e6).toBeLessThan(3000)
+})
+
 test("hook stdout streams into the per-node log feed (R7)", async () => {
   const r = await run(linear([{ on: "enter", node: "s", run: "echo streamed-line" }]), "s")
   const hit = r.log.find((l) => l.stream === "stdout" && l.line === "streamed-line")
   expect(hit?.node).toBe("s")
+})
+
+test("failed fires from the step catch when a node activity throws", async () => {
+  const dir = tmp()
+  const f = join(dir, "boom")
+  const chart: Chart = {
+    name: "boom",
+    nodes: [
+      { id: "s", type: "source", config: {} },
+      { id: "x", type: "boom", config: {} }, // run() throws
+      { id: "done", type: "end", config: { outcome: "success" } },
+    ],
+    edges: [
+      { from: "s", to: "x", name: "go" },
+      { from: "x", to: "done", name: "next" },
+    ],
+    hooks: [{ on: "failed", run: `echo "$WHOACHART_NODE" >> ${f}` }],
+  }
+  const r = await run(chart, "s")
+  expect((await r.marble())?.status).toBe("failed")
+  expect(readFileSync(f, "utf8").trim()).toBe("x") // fired with the throwing node
+})
+
+test("start fires exactly once even when the marble blocks at its FIRST node then is signaled", async () => {
+  const dir = tmp()
+  const f = join(dir, "startonce")
+  const chart: Chart = {
+    name: "blkstart",
+    nodes: [
+      { id: "g", type: "waiter", config: {} }, // blocks immediately, at the entry node
+      { id: "done", type: "end", config: { outcome: "success" } },
+    ],
+    edges: [{ from: "g", to: "done", name: "go" }],
+    hooks: [{ on: "start", run: `echo x >> ${f}` }],
+  }
+  const st = store()
+  await st.init()
+  const eng = new Engine({ chart, store: st })
+  const m = newMarble("blkstart", "g") // submit directly at the blocking node
+  await eng.submit(m)
+  await eng.drain()
+  expect((await st.load(m.id))?.status).toBe("blocked")
+  await eng.signal(m.id, { next: "go" }) // re-enters g — history is still length 1 here
+  await eng.drain()
+  expect((await st.load(m.id))?.status).toBe("done")
+  // The defect this guards: history.length===1 still held on re-entry, so a
+  // history-based gate would fire `start` twice.
+  expect(readFileSync(f, "utf8").trim().split("\n")).toEqual(["x"])
+})
+
+test("failed fires from the cycle guard (maxSteps exceeded)", async () => {
+  const dir = tmp()
+  const f = join(dir, "cycle")
+  const chart: Chart = {
+    name: "loop",
+    nodes: [
+      { id: "s", type: "source", config: {} },
+      { id: "a", type: "source", config: {} },
+    ],
+    edges: [
+      { from: "s", to: "a", name: "go" },
+      { from: "a", to: "s", name: "back" }, // s <-> a forever
+    ],
+    hooks: [{ on: "failed", run: `echo cycle >> ${f}` }],
+  }
+  const st = store()
+  await st.init()
+  const eng = new Engine({ chart, store: st, maxSteps: 3 })
+  const m = newMarble("loop", "s")
+  await eng.submit(m)
+  await eng.drain()
+  expect((await st.load(m.id))?.status).toBe("failed")
+  expect(readFileSync(f, "utf8").trim()).toBe("cycle")
+})
+
+test("a node-scoped leave hook fires only on departure from its node (no on_leave present)", async () => {
+  const dir = tmp()
+  const f = join(dir, "leaveonly")
+  const chart: Chart = {
+    name: "lv",
+    nodes: [
+      { id: "s", type: "source", config: {} },
+      { id: "m", type: "source", config: {} },
+      { id: "done", type: "end", config: { outcome: "success" } },
+    ],
+    edges: [
+      { from: "s", to: "m", name: "a" },
+      { from: "m", to: "done", name: "b" },
+    ],
+    hooks: [{ on: "leave", node: "m", run: `echo "$WHOACHART_NODE" >> ${f}` }],
+  }
+  await run(chart, "s")
+  expect(readFileSync(f, "utf8").trim().split("\n")).toEqual(["m"]) // only m leaves, not s
 })
 
 test("R8: inline on_leave and a leave hook both run", async () => {

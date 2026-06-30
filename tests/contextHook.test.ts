@@ -89,10 +89,42 @@ test("stderr lines reach onLine", async () => {
   expect(s.err()).toBe("oops")
 })
 
-test("two hooks for the same (marble,node) run concurrently without a temp-file race", async () => {
+test("four hooks for the same (marble,node) run concurrently without a temp-file race", async () => {
   // Each reads its own WHOACHART_CONTEXT file mid-run; a shared path would ENOENT.
   const mk = () => runHookCommand(base({ script: "cat \"$WHOACHART_CONTEXT\" > /dev/null; echo ok", marble: marble({ id: "same", node: "same" }), node: node({ id: "same" }) }))
-  const [a, b] = await Promise.all([mk(), mk(), mk(), mk()].slice(0, 4))
-  expect(a.exitCode).toBe(0)
-  expect(b.exitCode).toBe(0)
+  const results = await Promise.all([mk(), mk(), mk(), mk()])
+  for (const r of results) expect(r.exitCode).toBe(0) // a race on invocation 3/4 would surface here
+})
+
+test("an unnamed traversal sets WHOACHART_FROM/TO but not WHOACHART_EDGE", async () => {
+  const s = sink()
+  await runHookCommand(base({ script: 'echo "[${WHOACHART_EDGE-unset}|$WHOACHART_FROM|$WHOACHART_TO]"', event: "traverse", edge: { from: "a", to: "b" }, onLine: s.onLine }))
+  expect(s.out()).toBe("[unset|a|b]")
+})
+
+// --- timeout is a HARD ceiling regardless of how the hook holds its pipes ---
+// (Regression for the pipeline/backgrounded/trap-TERM wedge: a grandchild holding
+// the stdout fd, or a TERM-ignoring shell, must not let the hook outlive timeout.)
+test("a pipeline hook is bounded by its timeout even though a grandchild holds the pipe", async () => {
+  const t0 = Bun.nanoseconds()
+  const r = await runHookCommand(base({ script: "sleep 9 | cat", timeoutMs: 200 }))
+  const elapsedMs = (Bun.nanoseconds() - t0) / 1e6
+  expect(r.timedOut).toBe(true)
+  expect(elapsedMs).toBeLessThan(2000) // not ~9000ms (the natural pipeline runtime)
+})
+
+test("a backgrounded child does not keep the hook alive past the shell's exit", async () => {
+  const t0 = Bun.nanoseconds()
+  const r = await runHookCommand(base({ script: "sleep 9 & exit 0", timeoutMs: 5000 }))
+  const elapsedMs = (Bun.nanoseconds() - t0) / 1e6
+  expect(r.exitCode).toBe(0)
+  expect(elapsedMs).toBeLessThan(2000) // resolves on the shell's exit, not the 9s child
+})
+
+test("a hook that ignores SIGTERM is force-killed (SIGKILL escalation)", async () => {
+  const t0 = Bun.nanoseconds()
+  const r = await runHookCommand(base({ script: "trap '' TERM; sleep 9", timeoutMs: 200 }))
+  const elapsedMs = (Bun.nanoseconds() - t0) / 1e6
+  expect(r.timedOut).toBe(true)
+  expect(elapsedMs).toBeLessThan(4000) // killed via SIGKILL after the grace, not 9s
 })

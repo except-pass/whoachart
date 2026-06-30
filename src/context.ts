@@ -8,6 +8,17 @@ import type { Marble, ChartNode, ActivityStream, HookEvent } from "./types"
 // hung hook can't leak a process or stall engine drain; a per-hook `timeout`
 // overrides it.
 export const DEFAULT_HOOK_TIMEOUT_MS = 30_000
+// After SIGTERM on overrun, wait this long before escalating to SIGKILL — a
+// well-behaved hook gets a chance to clean up; a trap/ignore-TERM hook is forced.
+const HOOK_KILL_GRACE_MS = 2_000
+// Once the shell has exited, give the pipes only this long to flush before we
+// stop waiting — a detached grandchild holding the fd must never hang the caller.
+const HOOK_PUMP_GRACE_MS = 500
+
+const unref = (t: ReturnType<typeof setTimeout>) => {
+  ;(t as unknown as { unref?: () => void }).unref?.()
+}
+const delay = (ms: number) => new Promise<void>((res) => unref(setTimeout(res, ms)))
 
 export interface ActivityOutput {
   exitCode: number
@@ -196,20 +207,43 @@ export async function runHookCommand(fire: HookFire): Promise<HookOutput> {
       stderr: "pipe",
     })
     let timedOut = false
-    const timer = setTimeout(() => {
+    // On overrun: SIGTERM the shell, then escalate to SIGKILL after a grace so a
+    // hook that traps or ignores TERM still can't outlive its ceiling.
+    let killTimer: ReturnType<typeof setTimeout> | undefined
+    const termTimer = setTimeout(() => {
       timedOut = true
-      proc.kill()
+      proc.kill() // SIGTERM
+      killTimer = setTimeout(() => {
+        try {
+          proc.kill("SIGKILL")
+        } catch {
+          /* already exited */
+        }
+      }, HOOK_KILL_GRACE_MS)
+      unref(killTimer)
     }, timeoutMs)
-    ;(timer as unknown as { unref?: () => void }).unref?.()
+    unref(termTimer)
+
+    // Drain both pipes, but key completion on the SHELL exiting — NOT on the pipes
+    // closing. A pipeline or backgrounded hook (`curl | jq`, `sleep 9 &`) leaves a
+    // grandchild holding the stdout write-fd after the shell dies; pumpStream would
+    // then never see EOF and would hang this call — and any drain() awaiting it —
+    // far past the timeout, the exact wedge the ceiling exists to prevent. So we
+    // await proc.exited (bounded by the SIGKILL escalation above) and give the
+    // pumps only a brief post-exit grace to flush. The pump promise is
+    // .catch-guarded because it may outlive us reading an orphaned pipe.
+    const pumps = Promise.all([
+      pumpStream(proc.stdout, "stdout", onLine),
+      pumpStream(proc.stderr, "stderr", onLine),
+    ])
+    pumps.catch(() => {})
     try {
-      await Promise.all([
-        pumpStream(proc.stdout, "stdout", onLine),
-        pumpStream(proc.stderr, "stderr", onLine),
-      ])
       const exitCode = await proc.exited
+      await Promise.race([pumps, delay(HOOK_PUMP_GRACE_MS)])
       return { exitCode, timedOut }
     } finally {
-      clearTimeout(timer)
+      clearTimeout(termTimer)
+      if (killTimer) clearTimeout(killTimer)
     }
   } finally {
     await unlink(ctxPath).catch(() => {})

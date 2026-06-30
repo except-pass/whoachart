@@ -118,6 +118,11 @@ export interface Marble {
   error?: string
   createdAt: string
   updatedAt: string
+  // True once the marble's `start` hook has fired. `history` length is NOT a
+  // reliable "first entry" signal — it is only pushed on a successful traverse, so
+  // a marble that blocks or fails at its FIRST node and then re-enters (signal /
+  // retry) still has length 1. This persisted flag makes `start` fire exactly once.
+  started?: boolean
 }
 
 export interface NodeResult {
