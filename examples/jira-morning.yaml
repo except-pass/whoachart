@@ -20,6 +20,10 @@
 #          scan or skipped weekend is covered by the next run's window.
 name: jira-morning
 nodes:
+  # NOTE: `scan` MUST remain the FIRST source node — findStart() picks the first
+  # source in document order as the chart's default entry (bare POST /marbles and
+  # the UI "+" button). Reordering nodes so `triage-intake` comes first would
+  # silently flip the default morning-scan entry point.
   - id: scan
     type: source
     name: Morning scan
@@ -72,14 +76,19 @@ nodes:
         SEEN=$(curl -sf "$BASE/api/charts/jira-morning/marbles" \
           | jq -c '[.marbles[] | select(.context.key) |
               { key: .context.key, updated: (.context.updated // ""),
-                live: (.status == "queued" or .status == "running" or .status == "blocked") }]')
+                live: (.status == "queued" or .status == "running" or .status == "blocked"),
+                failed: (.status == "failed") }]')
 
         SPAWNED=0
         while IFS= read -r row; do
           KEY=$(jq -r .key <<<"$row")
           UPD=$(jq -r .fields.updated <<<"$row")
+          # Skip if a LIVE marble exists, or a NON-FAILED past marble already saw
+          # this `updated` stamp. A FAILED marble keeps context.updated, so without
+          # the `failed` exclusion an approved-but-failed workon would suppress the
+          # ticket forever — re-triage must stay possible after a failure.
           if jq -e --arg k "$KEY" --arg u "$UPD" \
-               'any(.[]; .key == $k and (.live or .updated == $u))' <<<"$SEEN" >/dev/null; then
+               'any(.[]; .key == $k and (.live or (.updated == $u and (.failed | not))))' <<<"$SEEN" >/dev/null; then
             echo "dedupe: $KEY already live or unchanged, skipping" >&2
             continue
           fi
@@ -147,7 +156,11 @@ nodes:
         # attention=true on empty/unparseable output so nothing is dropped silently.
         OUT=$(claude -p "$PROMPT" --allowedTools "mcp__atlassian__*" 2>/dev/null \
               | grep -oE '\{.*\}' | tail -1 || true)
-        ATT=$(jq -r '.attention // true' <<<"${OUT:-{}}" 2>/dev/null || echo true)
+        # Default to attention ONLY when the key is absent/unparseable — NOT on a
+        # genuine `false`. jq's `//` treats false like null, so `.attention // true`
+        # would flip every FYI issue (attention:false) to attention, defeating the
+        # whole cheap-triage filter. `has(...)` keeps a real false routing to fyi.
+        ATT=$(jq -r 'if has("attention") then .attention else true end' <<<"${OUT:-{}}" 2>/dev/null || echo true)
         WHY=$(jq -r '.why // "triage output unparseable — review manually"' <<<"${OUT:-{}}" 2>/dev/null \
               || echo "triage output unparseable — review manually")
 
@@ -187,8 +200,12 @@ nodes:
         ITYPE=$(jq -r '.issue_type // ""' "$WHOACHART_CONTEXT")
         LKEY=$(tr 'A-Z' 'a-z' <<<"$KEY")
 
+        # Requires a Tinstar epic whose name lowercases to "dev". Guard it so a
+        # missing epic fails with a readable reason in the chart UI instead of a
+        # bare jq exit code (set -e would otherwise kill the node silently).
         EPIC=$(curl -sf "$TINSTAR/api/state" \
-          | jq -re '[.epics[] | select((.name|ascii_downcase)=="dev")][0].id')
+          | jq -re '[.epics[] | select((.name|ascii_downcase)=="dev")][0].id') \
+          || { echo "spawn-workon: no 'dev' epic found in Tinstar — create one or rename the lane" >&2; exit 1; }
 
         # Task may already exist from an earlier workon — tolerate a refusal.
         jq -cn --arg id "task-$LKEY" --arg n "$KEY: $SUMMARY" --arg e "$EPIC" --arg u "$URL" \
