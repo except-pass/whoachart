@@ -46,6 +46,11 @@ export interface ControlApiOpts {
 //   GET  /api/charts/:name/def            (chart topology + layout)
 //   GET  /api/charts/:name/state          (bounded live view aggregate; polled by the canvas page)
 //   GET  /api/charts/:name/nodes/:id/logs (live-output delta: ?since=<seq>&marble=<id>)
+//   GET  /ui/collections/:name            (collection index shell HTML)
+//   GET  /api/collections                 (list registered collections)
+//   GET  /api/collections/:name           (composed member status for the index)
+//   POST /api/collections                 (register; raw YAML or {path} by-reference)
+//   POST /api/collections/reload          (rescan the collections dir, hot)
 //   POST /api/hooks/:chart/:hook          (tailnet-internal inbound trigger)
 //   POST /api/charts/:name/marbles        { context?, workpiece?, start? }
 //   GET  /api/charts/:name/marbles

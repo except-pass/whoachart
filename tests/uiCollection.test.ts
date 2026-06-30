@@ -83,3 +83,37 @@ test("canvas toggle tiles loaded members only and hides the index (R11/R12/R13)"
   expect((doc.getElementById("cards") as any).classList.contains("hidden")).toBe(true)
   expect((doc.getElementById("tiles") as any).classList.contains("hidden")).toBe(false)
 })
+
+test("opening the canvas before the first poll leaves it empty until data arrives", () => {
+  const doc = mount()
+  // No renderIndex yet (poll hasn't landed); operator toggles canvas with no view.
+  setCanvas(true, null)
+  expect(doc.querySelectorAll("#tiles iframe")).toHaveLength(0)
+  // When data arrives, the tiles can be built (this is what tick() does via the
+  // canvasOpen && !tilesBuilt guard).
+  renderTiles(VIEW)
+  expect(doc.querySelectorAll("#tiles iframe")).toHaveLength(3)
+})
+
+test("closing the canvas tears down iframes so their polls don't leak", () => {
+  const doc = mount()
+  renderIndex(VIEW)
+  setCanvas(true, VIEW)
+  expect(doc.querySelectorAll("#tiles iframe")).toHaveLength(3)
+  // Closing must UNMOUNT the iframes (each runs its own 600ms /state poll); hiding
+  // alone would leak N poll loops for the page lifetime.
+  setCanvas(false, VIEW)
+  expect(doc.querySelectorAll("#tiles iframe")).toHaveLength(0)
+})
+
+test("reopening the canvas rebuilds tiles from the latest membership", () => {
+  const doc = mount()
+  renderIndex(VIEW)
+  setCanvas(true, VIEW)
+  setCanvas(false, VIEW)
+  // A member that loaded since the last open now appears (no one-shot freeze).
+  const grown = { ...VIEW, members: [...VIEW.members, { name: "delta", missing: false }] }
+  setCanvas(true, grown)
+  const names = [...doc.querySelectorAll("#tiles .th")].map((t: any) => t.textContent)
+  expect(names).toEqual(["charlie", "alpha", "bravo", "delta"])
+})

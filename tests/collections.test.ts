@@ -138,6 +138,88 @@ test("collections are disabled (501) when no collections dir is configured", asy
   await d2.start()
   expect(d2.collections()).toEqual([])
   await expect(d2.registerCollection(MANIFEST)).rejects.toThrow(/not configured/)
+  // The READ path is 501 too (feature off), not 404 — a client must be able to
+  // tell "collections disabled" from "name not found".
+  expect(() => d2.collection("anything")).toThrow(/not configured/)
+})
+
+test("multi-end chart leaves lastOutcome null (no honest cross-end recency)", async () => {
+  // A chart with two end nodes: lastOutcome can't say which finished most
+  // recently, so it must stay null rather than pick an arbitrary end.
+  await writeFile(join(chartsDir, "twoend.yaml"), `
+name: twoend
+nodes:
+  - id: ingest
+    type: source
+    config: { trigger: api }
+  - id: gate
+    type: human
+    config: {}
+  - id: ok
+    type: end
+    config: { outcome: success }
+  - id: no
+    type: end
+    config: { outcome: fail }
+edges:
+  - { from: ingest, to: gate }
+  - { from: gate, to: ok, name: approve }
+  - { from: gate, to: no, name: decline }
+`)
+  await writeFile(join(collectionsDir, "multi.yaml"), `
+name: multi
+title: t
+description: d
+members: [twoend]
+`)
+  clearRegistry(); registerBuiltins()
+  const d2 = new Daemon({ chartsDir, collectionsDir, storeDir, client: new FakeCanvas() })
+  await d2.start()
+  // Drive one marble to the success end.
+  const m = await d2.submit("twoend", {})
+  await waitForStatus(() => d2.marble("twoend", m.id), "blocked")
+  await d2.signal("twoend", m.id, { next: "approve" })
+  await waitForStatus(() => d2.marble("twoend", m.id), "done")
+
+  const member = d2.collection("multi").members[0]
+  expect(member.ended).toBe(1)
+  expect(member.lastOutcome).toBeNull() // two end nodes → no honest recency
+})
+
+test("POST /api/collections returns 409 on a duplicate name", async () => {
+  const dup = `
+name: srena
+title: t
+description: d
+members: [alpha]
+`
+  const res = await fetch(`${base}/api/collections`, { method: "POST", body: dup })
+  expect(res.status).toBe(409)
+})
+
+test("POST /api/collections returns 400 on a malformed manifest body", async () => {
+  const res = await fetch(`${base}/api/collections`, { method: "POST", body: "name: bad\ntitle: t" }) // no members
+  expect(res.status).toBe(400)
+})
+
+test("POST /api/collections/reload from a non-loopback peer is rejected (writeGate)", async () => {
+  const tailnet = createControlApi(daemon, 0, { resolveAddr: () => "100.108.201.76" })
+  const res = await fetch(`http://localhost:${tailnet.port}/api/collections/reload`, { method: "POST" })
+  expect(res.status).toBe(403)
+  tailnet.stop(true)
+})
+
+test("loadNewCollections isolates a bad manifest mid-rescan (loaded + errors)", async () => {
+  await writeFile(join(collectionsDir, "goodone.yaml"), `
+name: goodone
+title: t
+description: d
+members: [bravo]
+`)
+  await writeFile(join(collectionsDir, "badone.yaml"), "name: badone\ntitle: t") // no members
+  const res = await daemon.loadNewCollections()
+  expect(res.loaded).toContain("goodone")
+  expect(res.errors.some((e) => e.name === "badone")).toBe(true)
 })
 
 // ---- U4: control API ----

@@ -1,6 +1,6 @@
 import { mkdir, readdir, readFile, symlink } from "node:fs/promises"
 import { join } from "node:path"
-import { assertSafeChartName, atomicWrite } from "./chartStore"
+import { assertSafeChartName, atomicWrite, fileExists } from "./chartStore"
 
 // Server-owned directory of collection manifest *.yaml files — the same
 // disk-is-the-registry stance as ChartStore (src/chartStore.ts), for a different
@@ -68,18 +68,5 @@ export class CollectionStore {
     const linkPath = this.path(name) // assertSafeChartName runs inside path()
     await symlink(target, linkPath)
     return linkPath
-  }
-}
-
-// Local copy of ChartStore's private fileExists: a real read error (perms, I/O)
-// must not masquerade as "absent". Kept private to this module rather than
-// widening ChartStore's export surface for one helper.
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    await readFile(path, "utf8")
-    return true
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false
-    throw err
   }
 }

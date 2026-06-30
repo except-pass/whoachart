@@ -36,6 +36,10 @@ test("rejects a missing title", () => {
   expect(() => parseCollection(good.replace("title: Serena's operating loop\n", ""))).toThrow()
 })
 
+test("rejects a missing description", () => {
+  expect(() => parseCollection(good.replace("description: The watch, the standup, and the PDCA brick.\n", ""))).toThrow()
+})
+
 test("rejects when members is not an array", () => {
   const bad = `
 name: srena

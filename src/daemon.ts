@@ -820,6 +820,11 @@ export class Daemon {
   // and the other members compose normally. Throws ChartError(404) only when the
   // COLLECTION itself is unknown.
   collection(name: string): CollectionView {
+    // Check the store first so a read on a daemon with collections DISABLED is a
+    // 501 (feature off), not a 404 (name not found) — otherwise a client can't
+    // tell "collections unconfigured" from "typo'd name". Mirrors the 501 the
+    // write paths already return; the plan (U3) specifies 501 on this read too.
+    if (!this.collectionStore) throw new ChartError("collection store not configured (set WHOACHART_COLLECTIONS_DIR)", 501)
     const entry = this.collectionRegistry.get(name)
     if (!entry) throw new ChartError(`unknown collection: ${name}`, 404)
     const { collection } = entry
@@ -838,14 +843,19 @@ export class Daemon {
     if (!rt) return { name, missing: true }
     const snap = rt.view.snapshot()
     const blocked = snap.live.filter((m) => m.status === "blocked").length
-    let ended = 0
+    const ended = Object.values(snap.ends).reduce((sum, t) => sum + t.total, 0)
+    // lastOutcome is only HONEST on a single-END-NODE chart: the snapshot carries
+    // no cross-end ordering, so a chart with multiple ends can't say which run
+    // finished most recently, and a "last: done" badge that silently reflects an
+    // arbitrary end would mislead. Key on the chart's end-node COUNT (not how many
+    // ends have fired yet) so the badge's presence is stable, not flickering on as
+    // the first end fires and off once a second does. One end → recent.at(-1) is
+    // the most recent terminal; multiple (or zero) ends → leave it null.
+    const endNodeCount = rt.chart.nodes.filter((n) => n.type === "end").length
     let lastOutcome: "done" | "failed" | null = null
-    for (const tally of Object.values(snap.ends)) {
-      ended += tally.total
-      // Best-effort recency: the last remembered terminal outcome. Per-end
-      // recency only (the snapshot carries no cross-end ordering), which is a
-      // good-enough "did the last run pass?" hint for a card.
-      const last = tally.recent.at(-1)
+    if (endNodeCount === 1) {
+      const tally = Object.values(snap.ends)[0]
+      const last = tally?.recent.at(-1)
       if (last) lastOutcome = last.status === "failed" ? "failed" : "done"
     }
     return {
