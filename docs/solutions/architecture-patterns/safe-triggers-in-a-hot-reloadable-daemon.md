@@ -91,3 +91,7 @@ A related, deliberate non-trap: an authorization-shaped marker (here `decider: h
 - **Before:** `cron` validated only when `Scheduler.arm()` ran → an invalid expression on `updateChart` left the old engine resumed *and* the new runtime in the map (two owners of one marble store). **After:** `parseCron`/`everyToMs` called in `parseChart` → invalid expression returns 400 before any swap; tests assert register/reload of a bad cron is rejected and nothing installs.
 - **Before:** a Feb-29 cron threw `no match within a year` inside the re-arm `setTimeout` callback → uncaught crash. **After:** the search horizon covers leap years (real Feb-29 resolves) *and* `repeat()` catches a throwing `delayMs()` → schedule stops gracefully via `onError`; an impossible cron (Feb 30) no longer crashes the daemon.
 - **Before:** deleting a chart whose supervisor `spawnSession` was still in flight recorded the session *after* delete → leaked. **After:** the spawn callback re-checks `runtimes.has` and stops the late session; a deferred-launcher test reproduces the race and asserts teardown.
+
+## Related
+
+- See also [Subprocess timeout must bound on process exit, not stream drain](../performance-issues/subprocess-timeout-not-bounded-by-stream-drain.md) — sibling in this daemon's process-lifecycle-robustness family (bounding a runaway hook subprocess ⟷ tearing down a fire-and-forget async spawn).
