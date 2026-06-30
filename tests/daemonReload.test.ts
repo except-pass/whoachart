@@ -118,6 +118,10 @@ test("boot skips a malformed chart instead of crashing, and records it in bootEr
   expect(d.charts()).toEqual(["good"])
   expect(d.bootErrors.map((e) => e.name)).toContain("broken")
   expect(d.bootErrors.find((e) => e.name === "broken")!.error).toBeTruthy()
+  // `broken` is in BOTH the explicit list and the store dir; it must be recorded
+  // exactly once, not double-loaded by the store-dir loop after the explicit
+  // loop's install failed (the `attempted` guard, not just `runtimes.has`).
+  expect(d.bootErrors.filter((e) => e.name === "broken")).toHaveLength(1)
 })
 
 test("loadNewCharts requires a chart store (501 when none configured)", async () => {

@@ -318,15 +318,20 @@ export class Daemon {
 
     // Explicit boot-load list (existing behavior). A malformed chart is skipped
     // and recorded (bootErrors) — one bad file must not crash the daemon.
+    const attempted = new Set<string>() // names already boot-loaded (succeeded OR failed)
     for (const path of this.opts.charts ?? []) {
       const name = basename(path).replace(/\.ya?ml$/, "")
+      attempted.add(name)
       await this.bootLoad(name, path)
     }
-    // Store-dir charts (CRUD-managed). Skip names already loaded above so a dir
-    // that overlaps the explicit list (the common default) isn't double-loaded.
+    // Store-dir charts (CRUD-managed). Skip names already ATTEMPTED above — keying
+    // on `runtimes` alone would re-load (and double-record in bootErrors) a chart
+    // that's in both the explicit list and the store dir but FAILED to install,
+    // since a failed bootLoad leaves no runtime entry. The common default has the
+    // dir overlap the explicit list, so a single malformed file hits both loops.
     if (this.chartStore) {
       for (const name of await this.chartStore.listNames()) {
-        if (this.runtimes.has(name)) continue
+        if (this.runtimes.has(name) || attempted.has(name)) continue
         const file = await this.chartStore.resolvePath(name) // honor a legacy .yml
         await this.bootLoad(name, file)
       }
