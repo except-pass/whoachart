@@ -150,6 +150,10 @@ export interface ChartDef {
   // How the chart is driven (cron/interval/webhook). Surfaced so the UI and a
   // supervisor agent can see a chart's triggers, not just its topology.
   triggers?: ChartTrigger[]
+  // Chart-level lifecycle hooks, surfaced as METADATA ONLY — the `run` command is
+  // deliberately omitted (it can carry secrets, and /def is tailnet-reachable; same
+  // trust surface that drives redactSecrets on node config).
+  hooks?: { on: string; node?: string; edge?: string; timeout?: number }[]
   // Advisory static-analysis findings for the live chart, computed at request
   // time so a hot-reload (3a) re-lints. Separate top-level key — NOT folded into
   // nodes/edges — so the canvas (2b) and other /def consumers are undisturbed.
@@ -737,6 +741,8 @@ export class Daemon {
       edges: rt.chart.edges.map((e) => ({ from: e.from, to: e.to, name: e.name, default: e.default, form: e.form })),
       layout: { boxes, width: rt.layout.width, height: rt.layout.height },
       triggers: rt.chart.triggers,
+      // Metadata only — never the `run` command (see ChartDef.hooks).
+      hooks: rt.chart.hooks?.map((h) => ({ on: h.on, node: h.node, edge: h.edge, timeout: h.timeout })),
       // Re-linted per request: the live chart may have been hot-reloaded since boot.
       lint: lintChart(rt.chart).warnings,
     }
