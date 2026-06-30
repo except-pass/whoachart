@@ -8,8 +8,11 @@ A Chart owns its Nodes and Edges. A Marble flows through one Chart, entering at 
 
 ## Chart structure
 
+### Collection
+A named, thematically-linked set of Charts the operator views together, declared in a thin manifest (`name`, `title`, `description`, and an ordered list of member Chart names). A Collection *references* its members by name — it never owns or loads them, so a member naming an unloaded Chart shows as a missing card rather than an error. It renders as an index of member cards with live status, expandable to a combined canvas of every member's node-graph. Membership is orthogonal to a Chart's runtime space.
+
 ### Chart
-A whoachart pipeline declared as YAML — a set of Nodes connected by Edges, plus optional chart-level Triggers, Hooks, and a Supervisor. Each Chart renders as a live, visual node-graph that animates Marbles moving through it.
+A whoachart pipeline declared as YAML — a set of Nodes connected by Edges, plus optional chart-level Triggers, Hooks, and a Supervisor. Each Chart renders as a live, visual node-graph that animates Marbles moving through it. A Chart may belong to a Collection.
 
 ### Node
 A single step in a Chart. A Node does real work when a Marble enters it — running a command, branching on a decision, or marking the Chart's entry or exit. Nodes connect to other Nodes through Edges.

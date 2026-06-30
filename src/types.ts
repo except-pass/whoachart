@@ -104,6 +104,18 @@ export interface Chart {
   hooks?: ChartHook[]
 }
 
+// A Collection is a thin, by-REFERENCE grouping: a named set of charts the
+// operator views together. `members` are chart NAMES, never embedded chart
+// definitions — the collection describes which charts belong, it does not own
+// or load them (an unloaded member surfaces as a missing card, not an error).
+// Membership order is authored intent and is preserved verbatim for display.
+export interface Collection {
+  name: string
+  title: string
+  description: string
+  members: string[]
+}
+
 export type MarbleStatus = "queued" | "running" | "blocked" | "done" | "failed"
 
 export interface Marble {

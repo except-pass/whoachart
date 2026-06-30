@@ -40,6 +40,13 @@ function resolveChartsDir(spec: string): string | undefined {
 async function main(): Promise<void> {
   const chartsSpec = process.env.WHOACHART_CHARTS ?? "examples"
   const chartsDir = resolveChartsDir(chartsSpec)
+  // Collections live in their own dir (a manifest in the chart dir would be
+  // parsed as a chart at boot). Opt-in: unset → collections disabled (501).
+  const collectionsDir = process.env.WHOACHART_COLLECTIONS_DIR
+    ? (isAbsolute(process.env.WHOACHART_COLLECTIONS_DIR)
+        ? process.env.WHOACHART_COLLECTIONS_DIR
+        : join(process.cwd(), process.env.WHOACHART_COLLECTIONS_DIR))
+    : undefined
   const storeDir = process.env.WHOACHART_STORE ?? join(process.cwd(), ".whoachart")
   const port = process.env.WHOACHART_PORT ? Number(process.env.WHOACHART_PORT) : DEFAULT_PORT
   const tinstarUrl = process.env.TINSTAR_URL ?? "http://localhost:5273"
@@ -53,6 +60,7 @@ async function main(): Promise<void> {
   const daemon = new Daemon({
     charts,
     chartsDir,
+    collectionsDir,
     storeDir,
     client,
     launcher: client,
@@ -79,6 +87,7 @@ async function main(): Promise<void> {
     console.error(`[whoachart] skipped invalid chart "${e.name}": ${e.error}`)
   }
   for (const name of daemon.charts()) console.log(`[whoachart]   ui: ${publicUrl}/ui/charts/${name}`)
+  for (const name of daemon.collections()) console.log(`[whoachart]   collection: ${publicUrl}/ui/collections/${name}`)
 }
 
 if (import.meta.main) {

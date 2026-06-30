@@ -3,6 +3,7 @@ import { ChartError } from "./chartStore"
 import { FormError } from "./forms"
 import { isLoopbackAddr, isTrustedAddr } from "./netGuard"
 import { renderPage } from "./ui/page"
+import { renderCollectionPage } from "./ui/collectionPage"
 import { serveStatic } from "./ui/static"
 
 const CORS = {
@@ -87,6 +88,16 @@ export function createControlApi(daemon: Daemon, port: number, opts: ControlApiO
         if (!daemon.charts().includes(p[2])) return new Response("unknown chart", { status: 404 })
         return new Response(renderPage(p[2]), { headers: { "Content-Type": "text/html; charset=utf-8" } })
       }
+      // Collection index shell. Same trailing-slash canonicalization as the chart
+      // page so the relative ../collection.js src resolves to /ui/collection.js.
+      if (req.method === "GET" && p[0] === "ui" && p[1] === "collections" && p[2] && !p[3]) {
+        if (url.pathname.endsWith("/")) {
+          const target = new URL(url.pathname.slice(0, -1) + url.search, url)
+          return Response.redirect(target.href, 301)
+        }
+        if (!daemon.collections().includes(p[2])) return new Response("unknown collection", { status: 404 })
+        return new Response(renderCollectionPage(p[2]), { headers: { "Content-Type": "text/html; charset=utf-8" } })
+      }
       if (req.method === "GET" && p[0] === "ui" && p[1] && !p[2]) {
         const file = await serveStatic(p[1])
         return file ?? json({ error: "not found" }, 404)
@@ -124,6 +135,43 @@ export function createControlApi(daemon: Daemon, port: number, opts: ControlApiO
           const blocked = writeGate(addr)
           if (blocked) return blocked
           return json(await daemon.loadNewCharts())
+        }
+
+        // GET /api/collections — list registered collection names.
+        if (req.method === "GET" && url.pathname === "/api/collections") {
+          return json({ collections: daemon.collections() })
+        }
+
+        // POST /api/collections/reload — rescan the collection-store dir, hot.
+        // Mutation → loopback-only (mirrors POST /api/charts/reload).
+        if (req.method === "POST" && url.pathname === "/api/collections/reload") {
+          const blocked = writeGate(addr)
+          if (blocked) return blocked
+          return json(await daemon.loadNewCollections())
+        }
+
+        // POST /api/collections — register a collection. A JSON `{path}` body
+        // registers BY REFERENCE (symlink); any other body is a raw YAML manifest
+        // registered BY VALUE. Both loopback-only (same writeGate as chart writes;
+        // a manifest names charts the daemon will execute, so it rides the strict
+        // gate). Mirrors POST /api/charts exactly.
+        if (req.method === "POST" && url.pathname === "/api/collections") {
+          const blocked = writeGate(addr)
+          if (blocked) return blocked
+          const raw = await req.text()
+          if ((req.headers.get("content-type") ?? "").includes("application/json")) {
+            let parsed: unknown
+            try { parsed = JSON.parse(raw) } catch { parsed = undefined }
+            const path = (parsed as { path?: unknown } | undefined)?.path
+            if (typeof path === "string") return json(await daemon.registerCollectionByPath(path), 201)
+          }
+          return json(await daemon.registerCollection(raw), 201)
+        }
+
+        // GET /api/collections/:name — the composed index payload (member status).
+        // ChartError(404) for an unknown name is mapped by the catch below.
+        if (req.method === "GET" && p[0] === "api" && p[1] === "collections" && p[2] && !p[3]) {
+          return json(daemon.collection(p[2]))
         }
 
         // POST /api/hooks/:chart/:hook — tailnet-internal inbound trigger. Behind
